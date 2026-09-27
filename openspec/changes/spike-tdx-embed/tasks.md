@@ -48,7 +48,7 @@
   - 产物：`src/routes/probe.ts` 内或 `src/client/probe/params.ts` 的解析模块
   - 验收：单测覆盖 `#600000` → `600000`、三形态同时提供时的优先级、`SH600000` / `600000.SH` 原样记录、非 6 位与空态（MUST NOT 猜测补全）
   - 依赖：1.3；design D-5
-- [x] 1.9 单测（零 mock，测试 seam；评审 Issue 16 / R2-7）
+- [x] 1.9 单测（零 mock，测试 seam；评审 Issue 16 / R2-7）（**跨线登记（2026-09-27）**：扫描具名豁免两类文件——① `test/structure.test.ts`（数据线扫描器，标记字面在其正则内）；② `test/helpers/data-stub.ts`（change 2 零 mock 的本地桩通道：官方域名重定向到 127.0.0.1 的真实 fetch，带运行时回环断言；见 `test/probe/probe-registration.test.ts` 豁免注释）。其余 test/** 零出站标记持续成立）
   - 产物：`test/**` 用例（`createProbeHandler(deps)` 纯工厂 + `IncomingMessage`/`ServerResponse` 桩；端到端时用真实临时 `node:http` server + `node:net` 裸 socket 驱动）
   - 验收：断言 401/403 拒绝码、传参优先级、注入转义、方法不匹配、`no-store` 头、`PROBE_HTML` 标记与无外链；**`test/**` MUST NOT 出现 `fetch(` / `http.request` 调用点**（`§7` 补充口径：结构断言作用域 = `src/**`，显式豁免 `test/**` 与内联 HTML 常量 `PROBE_HTML`）；扫描型用例先断言目标非空（`targets.length > 0`）且 MUST NOT 把 `PROBE_HTML` 文本计入扫描目标
   - 依赖：1.3–1.8；design D-10（含「与 `§7` 出站通道口径的边界」）

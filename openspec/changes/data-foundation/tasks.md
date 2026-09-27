@@ -51,50 +51,50 @@
 
 ## 3. 出站客户端、频控与缓存
 
-- [ ] 3.1 `src/data/http.ts`：原生 `fetch` + `AbortSignal.timeout` + 有限退避重试（至多 2 次）+ 非 2xx/非 JSON 显式错误；导出可替换的传输接口（测试用真实本地 http 服务桩，不用 mock）；**数据面唯一 `fetch(` 调用点**（全仓第二条具名出站通道 = change 3 的 `src/skill/download.ts`，见 `iteration-1-contracts §7`）
+- [x] 3.1 `src/data/http.ts`：原生 `fetch` + `AbortSignal.timeout` + 有限退避重试（至多 2 次）+ 非 2xx/非 JSON 显式错误；导出可替换的传输接口（测试用真实本地 http 服务桩，不用 mock）；**数据面唯一 `fetch(` 调用点**（全仓第二条具名出站通道 = change 3 的 `src/skill/download.ts`，见 `iteration-1-contracts §7`）
   - 产物：`src/data/http.ts`
   - 验收：用例 `超时显式错误`、`非 JSON 显式错误`、`退避重试上限 2 次`（真实 `node:http` 桩计数）全绿
   - 依赖：1.1
-- [ ] 3.2 `src/data/guard.ts`：每源并发上限、最小请求间隔（按源**全局**，单标的调用同样排队）、单次批量硬上限、盘中时段拒绝「全市场级」（判据 = 批量 > 硬上限 **或** 显式 `fullMarket`）、每源每交易日预算（按**列表级请求数**计，**一次 History 请求 = 一次列表级请求**）、`offSession`（**只放宽时段**）、`guard.sessionOverride`；所有出站必经此闸门
+- [x] 3.2 `src/data/guard.ts`：每源并发上限、最小请求间隔（按源**全局**，单标的调用同样排队）、单次批量硬上限、盘中时段拒绝「全市场级」（判据 = 批量 > 硬上限 **或** 显式 `fullMarket`）、每源每交易日预算（按**列表级请求数**计，**一次 History 请求 = 一次列表级请求**）、`offSession`（**只放宽时段**）、`guard.sessionOverride`；所有出站必经此闸门
   - 产物：`src/data/guard.ts`
   - 验收：用例 `offSession 不放宽批量硬上限`（超限仍拒 + 出站计数 0）、`单标的调用仍受全局间隔约束`（第二次调用等待至间隔到期）、`sessionOverride=off 盘中被视为盘后`、`History 请求计入列表级预算`（历史日取数后预算 +1）、**`拒绝态具名`**（`rejected=true` 且 `reason ∈ {sessionRejected,budgetExhausted,batchLimitExceeded,intervalLimited}` + `limit`/`used`；消费方按名分支，评审 Issue 31）全绿
   - 依赖：3.1
-- [ ] 3.3 `src/data/cache.ts`：两层缓存（**列表级** `source + requestedDate` / **code 派生视图级** `requestedDate + code`；MUST NOT 用 `businessDate` 做键）、按 `requestedDate` 折算 `<YYYYMMDD>` 分桶（折算经 `src/data/date.ts`）、payload 含 `businessDate` 与 `hitEndpoint`、入口命中判定（零网络）、`cacheSchema` 不匹配 → 视为未命中并覆盖写、原子写 + 写前 re-read；MUST NOT 提供 `refresh` 入参
+- [x] 3.3 `src/data/cache.ts`：两层缓存（**列表级** `source + requestedDate` / **code 派生视图级** `requestedDate + code`；MUST NOT 用 `businessDate` 做键）、按 `requestedDate` 折算 `<YYYYMMDD>` 分桶（折算经 `src/data/date.ts`）、payload 含 `businessDate` 与 `hitEndpoint`、入口命中判定（零网络）、`cacheSchema` 不匹配 → 视为未命中并覆盖写、原子写 + 写前 re-read；MUST NOT 提供 `refresh` 入参
   - 产物：`src/data/cache.ts`
   - 验收：用例 `列表级缓存先行`（20 标的 → 列表级请求数 1、预算 +1）、`源业务日不等于请求日时同参第二次零网络`（写入后读键仍可命中）、`cacheSchema 不匹配视为未命中`、`写入中断不留半截文件` 全绿
   - 依赖：3.1、2.4、4.5
-- [ ] 3.4 `src/data/normalize.ts`：`toNumber`（空值守卫全表 `""`/`"--"`/`"None"`/null/undefined）、`field(value, source, fetchedAt)` 信封、百分数比例换算、**含单位词的中文金额文本 → `null` 并保留原文本**（不参与计算）；单位常量（万元/亿元）可先建但**本 change 不验收**（T1/T2 无金额/市值字段）
+- [x] 3.4 `src/data/normalize.ts`：`toNumber`（空值守卫全表 `""`/`"--"`/`"None"`/null/undefined）、`field(value, source, fetchedAt)` 信封、百分数比例换算、**含单位词的中文金额文本 → `null` 并保留原文本**（不参与计算）；单位常量（万元/亿元）可先建但**本 change 不验收**（T1/T2 无金额/市值字段）
   - 产物：`src/data/normalize.ts`
   - 验收：用例 `空值守卫全表`、`字段缺失仍带 source/fetchedAt`、`比例换算 0.05→5`、`中文金额文本不参与计算`（`toNumber("1.6万亿") === null`）全绿；单位用例不设断言（在 spec 中已声明不验收），**但 MUST NOT 用 skip/todo 掩盖**（评审 Issue 24③）
   - 依赖：无
-- [ ] 3.5 单测：空值守卫全表、字段缺失仍带 source/fetchedAt、不可用态不被渲染成零值（渲染层 stub 断言文案非 `0`/`--`/空）、原位刷新不追加（断言目录内文件数不变）
+- [x] 3.5 单测：空值守卫全表、字段缺失仍带 source/fetchedAt、不可用态不被渲染成零值（渲染层 stub 断言文案非 `0`/`--`/空）、原位刷新不追加（断言目录内文件数不变）
   - 产物：`test/data-normalize.test.ts`
   - 验收：上述 4 组用例名全绿（证据：`pnpm test` 输出用例名）
   - 依赖：3.4
-- [ ] 3.6 单测（频控五 scenario，逐个断言「未发出请求」）：`预算耗尽`（预算降到 1 后第二次调用显式失败 + 说明用量）、`盘中拒绝全市场级调用`、`盘中显式 fullMarket 标记被拒绝`、`盘后 offSession 只放宽时段闸门`、`限流时钟与业务日期解耦`
+- [x] 3.6 单测（频控五 scenario，逐个断言「未发出请求」）：`预算耗尽`（预算降到 1 后第二次调用显式失败 + 说明用量）、`盘中拒绝全市场级调用`、`盘中显式 fullMarket 标记被拒绝`、`盘后 offSession 只放宽时段闸门`、`限流时钟与业务日期解耦`
   - 产物：`test/data-guard.test.ts`
   - 验收：5 组用例名全绿，每组断言真实本地桩的 `requestCount === 0`（拒绝路径）
   - 依赖：3.2
-- [ ] 3.7 单测（缓存幂等与并发）：当日重复调用零网络、同一列表派生多标的只取一次、跨日不命中、缓存写入原子性、**历史请求按列表级计数**（6 日回溯 → 预算用量 6，与 `iteration-1-contracts §12.5` 的 N=6 一致）
+- [x] 3.7 单测（缓存幂等与并发）：当日重复调用零网络、同一列表派生多标的只取一次、跨日不命中、缓存写入原子性、**历史请求按列表级计数**（6 日回溯 → 预算用量 6，与 `iteration-1-contracts §12.5` 的 N=6 一致）
   - 产物：`test/data-cache.test.ts`
   - 验收：5 组用例名全绿；`跨日不命中` 断言两日各 1 次列表级请求；`历史请求按列表级计数` 断言 History 请求同样使预算 +1（6 日回溯 → 预算用量 6）
   - 依赖：3.3
-- [ ] 3.8 **`guardStatus()` 频控状态查询出口（Issue 27）**：在 `src/data/guard.ts` 暴露只读状态查询（`rateLimitDate`/`budgetLimit`/`budgetUsed`/`remaining`/`minIntervalMs`/`fullMarketGuard`/`sessionState`/`fetchedAt`，多源时附 `sources[]`），并由 service 出口 `traderKit.data.guardStatus()` 暴露；**与护栏同一内存计数**（MUST NOT 第二份计数器）、**不出站**（不请求、不耗预算、不改 guard 计数与时段状态）；change 5 的「预算预检与分批」与 change 4 的降级文案按此具名消费（`data-tool-contract` 的「频控状态查询出口」Requirement）
+- [x] 3.8 **`guardStatus()` 频控状态查询出口（Issue 27）**：在 `src/data/guard.ts` 暴露只读状态查询（`rateLimitDate`/`budgetLimit`/`budgetUsed`/`remaining`/`minIntervalMs`/`fullMarketGuard`/`sessionState`/`fetchedAt`，多源时附 `sources[]`），并由 service 出口 `traderKit.data.guardStatus()` 暴露；**与护栏同一内存计数**（MUST NOT 第二份计数器）、**不出站**（不请求、不耗预算、不改 guard 计数与时段状态）；change 5 的「预算预检与分批」与 change 4 的降级文案按此具名消费（`data-tool-contract` 的「频控状态查询出口」Requirement）
   - 产物：`src/data/guard.ts`（状态查询）、`src/service/index.ts`（出口）
   - 验收：用例 `预算预检可用`（3 次列表级请求后 `budgetUsed=3`、`remaining=budgetLimit-3`，查询前后出站计数不变）、`预算耗尽时预检可判`（`remaining=0` 且可支撑「本次可处理前 N 个标的」）、`查询不出站`（出站计数与预算用量不变、17709 零 HTTP）、`消费方不自建预算计数`（结构断言：change 5 侧只调用本出口）全绿（评审 Issue 27/31）
   - 依赖：3.2、1.3
 
 ## 4. T0 `get_trade_date`（交易日解析）
 
-- [ ] 4.1 `src/data/trade-date.ts`：`resolveTradeDate({ date? })` —— 限流日（系统时钟固定 `Asia/Shanghai`，canonical `YYYY-MM-DD`）、请求日缺省 = 限流日、`date` 入参 canonical 并兼容 `YYYYMMDD`（经 4.5 的 `fromCompactDate` 归一）、业务日**无条件**从响应体取值、`isTradingDay` 只允许 `true | null`（与限流日**归一后同格式比较**）、`evidence` 记录判定依据、`errors[]` 说明失败；复用 3.3 列表级缓存（键 = `source + requestedDate`）与 3.2 护栏，MUST NOT 另建缓存
+- [x] 4.1 `src/data/trade-date.ts`：`resolveTradeDate({ date? })` —— 限流日（系统时钟固定 `Asia/Shanghai`，canonical `YYYY-MM-DD`）、请求日缺省 = 限流日、`date` 入参 canonical 并兼容 `YYYYMMDD`（经 4.5 的 `fromCompactDate` 归一）、业务日**无条件**从响应体取值、`isTradingDay` 只允许 `true | null`（与限流日**归一后同格式比较**）、`evidence` 记录判定依据、`errors[]` 说明失败；复用 3.3 列表级缓存（键 = `source + requestedDate`）与 3.2 护栏，MUST NOT 另建缓存
   - 产物：`src/data/trade-date.ts`
   - 验收：用例 `业务日 == 限流日 → true`、**`紧凑写法与带连字符写法判为同一日`**（`'20260924'` 与 `'2026-09-24'` 归一后相等，不允许恒 `null`）、`业务日 != 限流日 → null`、`列表为空仍取到业务日期`、`非法日期零请求`、`当日重复调用零网络`、`复用列表级缓存不重复取数`、`源业务日不等于请求日时同参仍零网络` 全绿
   - 依赖：3.2、3.3、4.5
-- [ ] 4.2 注册工具 `get_trade_date`（中文描述含「返回请求日/业务日/是否交易日（未知即 null）」）+ service `traderKit.data.resolveTradeDate`（同一实现）
+- [x] 4.2 注册工具 `get_trade_date`（中文描述含「返回请求日/业务日/是否交易日（未知即 null）」）+ service `traderKit.data.resolveTradeDate`（同一实现）
   - 产物：`src/tools/trade-date.ts`、`src/service/index.ts`
   - 验收：`test/smoke.test.ts` 断言工具名在册；用例 `工具与 service 双出口同一实现` 断言两者返回同一 schema 与同一数据
   - 依赖：4.1、1.3
-- [ ] 4.3 结构断言：`src/data/trade-date.ts` 内不存在「按系统时钟判定周一至周五 / 排除法定假日 / 推断非交易日」分支；输出 schema 中 `isTradingDay` 取值域为 `true|null`、`errors[]` 存在且成功时为空数组
+- [x] 4.3 结构断言：`src/data/trade-date.ts` 内不存在「按系统时钟判定周一至周五 / 排除法定假日 / 推断非交易日」分支；输出 schema 中 `isTradingDay` 取值域为 `true|null`、`errors[]` 存在且成功时为空数组
   - 产物：`test/trade-date.test.ts`
   - 验收：用例 `不得自行推断交易日`、`无交易日历不得伪造结论`、`输出 schema 含 errors 数组` 全绿（扫描型断言先断言目标文件非空）
   - 依赖：4.1
@@ -109,31 +109,31 @@
 
 ## 5. T1 `get_limit_reason`
 
-- [ ] 5.1 S7 客户端：`surgeLimitList`（请求日 == 限流日）/`surgeLimitHistory`（请求日 != 限流日）参数与字段映射（口径照 `fetch_hsl_reasons` 符号），路由判据 = 请求日 vs 限流日；**当日 List 空/失败可回退 History（记 endpoint 与 `notes`）**；**历史分支不得**用 List 兜底；源请求参数日期用 `toCompactDate` 折算（`iteration-1-contracts §1`）
+- [x] 5.1 S7 客户端：`surgeLimitList`（请求日 == 限流日）/`surgeLimitHistory`（请求日 != 限流日）参数与字段映射（口径照 `fetch_hsl_reasons` 符号），路由判据 = 请求日 vs 限流日；**当日 List 空/失败可回退 History（记 endpoint 与 `notes`）**；**历史分支不得**用 List 兜底；源请求参数日期用 `toCompactDate` 折算（`iteration-1-contracts §1`）
   - 产物：`src/data/s7.ts`
   - 验收：用例 `请求日等于限流日走 List 端点`、`当日 List 空回退 History 并记 endpoint`（断言 `notes` 含回退标注、`source` 反映实际端点）、**`历史日 History 为空不回退 List`**（断言无 List 数据参与，且最终可用态按聚合表：S5 命中 → `available=true`/`source='S5'`/`errors=[]`；两源无数据 → `errors` 含 `dateUnavailable`；两源失败 → `errors` 含 `sourceUnavailable`）全绿（评审 Issue 28）
   - 依赖：3.1、3.2、3.3、4.5
-- [ ] 5.2 S5 客户端：`flow.10jqka.com.cn/anomaly/v1/history` + `vis.10jqka.com.cn/infomine3/limit/limitup`（口径照 `fetch_limit_reason_local`），**删除本地 HTML 依赖**、`marketId` 表化 + 北交所显式不支持/待验证、时间值只进 `lastTime`、`hitRecordDate` 独立字段（`YYYY-MM-DD`）
+- [x] 5.2 S5 客户端：`flow.10jqka.com.cn/anomaly/v1/history` + `vis.10jqka.com.cn/infomine3/limit/limitup`（口径照 `fetch_limit_reason_local`），**删除本地 HTML 依赖**、`marketId` 表化 + 北交所显式不支持/待验证、时间值只进 `lastTime`、`hitRecordDate` 独立字段（`YYYY-MM-DD`）
   - 产物：`src/data/s5.ts`
   - 验收：用例 `本地 HTML 缺失不影响降级`、`北交所标的不静默按深市处理`、`市场映射为表驱动` 全绿
   - 依赖：3.1、3.2、4.5
-- [ ] 5.3 首封时间与最后封板分列（`firstTime` / `lastTime`），各带来源标注；`firstTime` 只来自 S7 `first_time`
+- [x] 5.3 首封时间与最后封板分列（`firstTime` / `lastTime`），各带来源标注；`firstTime` 只来自 S7 `first_time`
   - 产物：`src/data/limit-reason.ts`
   - 验收：用例 `S7 first_time → firstTime`、`降级 S5 只填 lastTime`、**`S5 时间不得进入 firstTime`**（断言 `firstTime.value === null` 且所有 `source=S5` 时间值不在 `firstTime`）、`最后封板时刻不得冒充首封`、`首封时间缺失 → null` 全绿
   - 依赖：5.1、5.2
-- [ ] 5.4 日期三义落地（`YYYY-MM-DD` 单一格式）：`requestedDate` 入参回声（canonical，兼容 `YYYYMMDD` 归一）；`tradeDate` 无条件取响应体；`requestedDate !== rateLimitDate` 且源业务日不一致 → `available=false` + `errors:[dateUnavailable]`（附请求日与实际业务日，均为 `YYYY-MM-DD`）；MUST NOT 仅 `notes` 标注；比较前 MUST 经 `src/data/date.ts` 归一
+- [x] 5.4 日期三义落地（`YYYY-MM-DD` 单一格式）：`requestedDate` 入参回声（canonical，兼容 `YYYYMMDD` 归一）；`tradeDate` 无条件取响应体；`requestedDate !== rateLimitDate` 且源业务日不一致 → `available=false` + `errors:[dateUnavailable]`（附请求日与实际业务日，均为 `YYYY-MM-DD`）；MUST NOT 仅 `notes` 标注；比较前 MUST 经 `src/data/date.ts` 归一
   - 产物：`src/data/limit-reason.ts`
   - 验收：用例 `请求日与源业务日不一致`（断言 `errors` 含 `dateUnavailable` 且 `available=false`）、`列表成功但为空 → tradeDate 仍可得`、`紧凑与带连字符两种入参得到同一 requestedDate` 全绿
   - 依赖：5.1、4.1、4.5
-- [ ] 5.5 注册工具 `get_limit_reason`（中文描述含主备源与不可用表现）、输出 schema 与渲染；输出含 `notes[]`、`hitRecordDate`（`YYYY-MM-DD` | `null`）与 `errors[]`
+- [x] 5.5 注册工具 `get_limit_reason`（中文描述含主备源与不可用表现）、输出 schema 与渲染；输出含 `notes[]`、`hitRecordDate`（`YYYY-MM-DD` | `null`）与 `errors[]`
   - 产物：`src/tools/limit-reason.ts`
   - 验收：`test/smoke.test.ts` 工具名在册；输出 schema 快照断言含 `tradeDate`/`requestedDate`/`hitRecordDate`（可为 `null`）/`errors`/`firstTime`/`lastTime`/`notes`
   - 依赖：5.3、5.4
-- [ ] 5.6 单测（覆盖缺口补齐）：主源成功 / 主源空走备源 / 主备均失败（`available=false` + 原因）/ 非法参数零请求 / 缓存命中 / **标的不在列表（tradeDate 可得）** / **列表为空（tradeDate 可得）** / **`hitRecordDate !== requestedDate` 只标注不冒充 `tradeDate`** / **当日 List 空回退 History** / **历史日不回退 List** / **`历史日 S5 命中不降级`**（`available=true`、`source='S5'`、`errors=[]`）/ **`历史日两源均无数据 → dateUnavailable`** / **`历史日两源均失败 → sourceUnavailable`**
+- [x] 5.6 单测（覆盖缺口补齐）：主源成功 / 主源空走备源 / 主备均失败（`available=false` + 原因）/ 非法参数零请求 / 缓存命中 / **标的不在列表（tradeDate 可得）** / **列表为空（tradeDate 可得）** / **`hitRecordDate !== requestedDate` 只标注不冒充 `tradeDate`** / **当日 List 空回退 History** / **历史日不回退 List** / **`历史日 S5 命中不降级`**（`available=true`、`source='S5'`、`errors=[]`）/ **`历史日两源均无数据 → dateUnavailable`** / **`历史日两源均失败 → sourceUnavailable`**
   - 产物：`test/limit-reason.test.ts`
   - 验收：13 组用例名全绿（证据：`pnpm test` 输出）；聚合三条断言 MUST 区分「无数据」与「取数失败」（评审 Issue 28）
   - 依赖：5.1–5.5
-- [ ] 5.7 跨 change 契约用例：以 `resolveTradeDate` 的业务日驱动 T1（`review-page` 的 `TradeDateResolver` seam 消费点），断言「列表为空时 seam 仍拿到非空交易日、且不等于系统日期」
+- [x] 5.7 跨 change 契约用例：以 `resolveTradeDate` 的业务日驱动 T1（`review-page` 的 `TradeDateResolver` seam 消费点），断言「列表为空时 seam 仍拿到非空交易日、且不等于系统日期」
   - 产物：`test/trade-date-integration.test.ts`
   - 验收：用例 `列表为空时归属交易日仍可得` 全绿；断言 `resolved !== rateLimitDate()`（经 `src/data/date.ts` 取得，MUST NOT 在测试里用 `new Date().toISOString().slice(0,10)` 自行截断）且非 `null`
   - 依赖：4.1、5.4
@@ -144,30 +144,31 @@
 
 ## 6. T2 `get_concepts`
 
-- [ ] 6.1 S8 客户端：请求参数与 headers（含 Referer/UA）、`fields=core_avg_pcp,plate_name,reason,plate_id,top_n_stocks`、`.SS`/`.SZ` 后缀、`code===20000` 成功判定
+- [x] 6.1 S8 客户端：请求参数与 headers（含 Referer/UA）、`fields=core_avg_pcp,plate_name,reason,plate_id,top_n_stocks`、`.SS`/`.SZ` 后缀、`code===20000` 成功判定
   - 产物：`src/data/s8.ts`
   - 验收：用例 `请求白名单含 reason 与 plate_id`（对真实本地桩断言 query 序列化结果含 5 个字段）、`成功码判定`、`北交所后缀待验证标注` 全绿
   - 依赖：3.1、3.2
-- [ ] 6.2 解析层：`core_avg_pcp` 排序与强度分档（≥5 强 / ≥2 中 / >0 弱 / <0 跌 / =0 平）、`strengthPct` 百分数换算、`reason` 截断 200 字、`reason`/`plateId` best-effort 降级（`null` + `notes`）、名称 best-effort 反查
+- [x] 6.2 解析层：`core_avg_pcp` 排序与强度分档（≥5 强 / ≥2 中 / >0 弱 / <0 跌 / =0 平）、`strengthPct` 百分数换算、`reason` 截断 200 字、`reason`/`plateId` best-effort 降级（`null` + `notes`）、名称 best-effort 反查
   - 产物：`src/data/concepts.ts`
   - 验收：用例 `字段缺失 → null 且带 source/fetchedAt + notes 标注`、`reason 截断`（`value.length <= 200`）、`名称命中/未命中` 全绿
   - 依赖：6.1
-- [ ] 6.3 概念缓存：复用两层缓存（列表级键 = **`concepts + requestedDate`**（与 `source + requestedDate` 同构）+ 派生视图级 `requestedDate + code`），跨日不命中、`cacheSchema` 升级视为未命中、源业务日 ≠ 请求日时同参第二次仍零网络；**T2 无日期语义**——`date` 只用于缓存分桶与键，请求 S8 MUST NOT 带日期参数；`businessDate=null`（源无日期字段）时 `notes` 记「源无日期，按 `requestedDate` 缓存」，目录段仍按 `requestedDate` 折算（评审 Issue 30）
+- [x] 6.3 概念缓存：复用两层缓存（列表级键 = **`concepts + requestedDate`**（与 `source + requestedDate` 同构）+ 派生视图级 `requestedDate + code`），跨日不命中、`cacheSchema` 升级视为未命中、源业务日 ≠ 请求日时同参第二次仍零网络；**T2 无日期语义**——`date` 只用于缓存分桶与键，请求 S8 MUST NOT 带日期参数；`businessDate=null`（源无日期字段）时 `notes` 记「源无日期，按 `requestedDate` 缓存」，目录段仍按 `requestedDate` 折算（评审 Issue 30）
   - 产物：`src/data/concepts.ts`（缓存接线）
   - 验收：用例 `同一列表派生多标的只取一次`（5 标的 → 列表级请求 1）、`跨日不命中`、`缓存 schema 升级`、`源业务日不等于请求日时仍零网络`、**`无日期源的键与目录由入参构造`**（`businessDate=null` 下同参第二次零网络、目录段 = `requestedDate`）、**`date 只用于缓存分桶`**（传非限流日仍取当日快照、无 `dateUnavailable`）全绿
   - 依赖：3.3、6.2、4.5
-- [ ] 6.4 注册工具 `get_concepts`（输出 schema 与渲染），service 出口 `traderKit.data.getConcepts`
+- [x] 6.4 注册工具 `get_concepts`（输出 schema 与渲染），service 出口 `traderKit.data.getConcepts`
   - 产物：`src/tools/concepts.ts`
   - 验收：`test/smoke.test.ts` 工具名在册；输出 schema 快照含 `businessDate`（`YYYY-MM-DD` | `null`）/`reason`/`plateId`/`strength`/`strengthPct`/`notes`/`errors`
   - 依赖：6.2、1.3
-- [ ] 6.5 单测（覆盖缺口补齐）：分档边界（6.2 / 2 / 0 / -1 / 0）、降序、名称命中与未命中（null）、空数据显式不可用、北交所后缀待验证标注、跨日不命中、`reason` 截断、**`businessDate=null` + `notes` 标注**、**非限流日 `date` 不产生 `dateUnavailable`**
+- [x] 6.5 单测（覆盖缺口补齐）：分档边界（6.2 / 2 / 0 / -1 / 0）、降序、名称命中与未命中（null）、空数据显式不可用、北交所后缀待验证标注、跨日不命中、`reason` 截断、**`businessDate=null` + `notes` 标注**、**非限流日 `date` 不产生 `dateUnavailable`**
   - 产物：`test/concepts.test.ts`
   - 验收：10 组用例名全绿
   - 依赖：6.1–6.4
-- [ ] 6.6 实测响应 fixture（待验证项 Issue 10）：以真实响应（或人工记录）落一份 S8 fixture 到 `test/fixtures/s8-plates.json`，并据此定稿 `reason`/`plateId` 是「必返」还是「best-effort 降级」
+- [x] 6.6 实测响应 fixture（待验证项 Issue 10）：以真实响应（或人工记录）落一份 S8 fixture 到 `test/fixtures/s8-plates.json`，并据此定稿 `reason`/`plateId` 是「必返」还是「best-effort 降级」
   - 产物：`test/fixtures/s8-plates.json`、（若证伪）`src/data/concepts.ts` 的注释与 spec 注记
   - 验收：fixture 文件存在且被 `test/concepts.test.ts` 引用；结论写入本文档或设计文档一行（`实测日期 | reason 是否返回 | plate_id 是否返回`）
   - 依赖：6.2
+  - **实测登记（2026-09-27，网络真实请求一次）**：`2026-09-27 | reason 返回（3/4 概念有值；「高价股」类概念天然无 reason——非字段裁剪） | plate_id 必返（4/4，number 类型）`。定稿：`fields` 扩写生效，`reason`/`plateId` 源有值时必返；源缺失（含天然无 reason）时 best-effort 降级 `null` + `notes`（不阻塞 `available`）。fixture 落 `test/fixtures/s8-plates.json`（`meta.conclusion` 持有同文），被 `test/concepts.test.ts` 的「S8 实测 fixture」用例引用。
 - [ ] 6.7 真实源抽查（人工，盘后）：`get_concepts` 一次，核对排序、分档、名称反查与 `reason` 是否存在
   - 产物：验收记录
   - 验收：记录格式 `入参 | 概念数 | 前 3 项 strengthPct | name | reason 是否非空`
@@ -175,26 +176,31 @@
 
 ## 7. 健康检查、双出口与结构断言
 
-- [ ] 7.1 `src/data/health.ts`：三方源轻量探测 + `127.0.0.1:17709` 仅 `net.connect` 探测；**独立通道**（不计预算、不计 guard 计数、不得被其它模块复用）；**3 秒总硬超时**（`AbortSignal.timeout` 截断）；异步、不阻塞挂载；状态经 `health.status()` 可查询；尊重 `diagnostics.probe.enabled` / `probe.targets` / `tdx17709.enabled`
+- [x] 7.1 `src/data/health.ts`：三方源轻量探测 + `127.0.0.1:17709` 仅 `net.connect` 探测；**独立通道**（不计预算、不计 guard 计数、不得被其它模块复用）；**3 秒总硬超时**（`AbortSignal.timeout` 截断）；异步、不阻塞挂载；状态经 `health.status()` 可查询；尊重 `diagnostics.probe.enabled` / `probe.targets` / `tdx17709.enabled`
   - 产物：`src/data/health.ts`
   - 验收：用例 `TdxW 未启动文案`、`探测超时 3s 总硬超时`（桩挂起 → 3s 内返回超时结论）、`探测不计预算与护栏计数`（挂载后预算用量 0、guard 计数 0）、`源不可用标记` 全绿；`time` 断言挂载路径总耗时 < 3.5s
   - 依赖：3.2、1.1
-- [ ] 7.2 service 出口完整暴露：`data.resolveTradeDate` / `data.getLimitReason` / `data.getConcepts` / **`data.guardStatus`**（预算与护栏状态唯一出口，见 3.8） / `health.status`（**两段视图** `{ data, skill }`，`skill` 段透传 change 3 的 `skill.status({ cwd? })`，不重复实现；与工具同一实现，同一缓存）
+- [x] 7.2 service 出口完整暴露：`data.resolveTradeDate` / `data.getLimitReason` / `data.getConcepts` / **`data.guardStatus`**（预算与护栏状态唯一出口，见 3.8） / `health.status`（**两段视图** `{ data, skill }`，`skill` 段透传 change 3 的 `skill.status({ cwd? })`，不重复实现；与工具同一实现，同一缓存）
   - 产物：`src/service/index.ts`
   - 验收：用例 `双出口同一实现`（工具与 service 各调一次 → 第二次零网络、结果相同）全绿；`guardStatus` 在 service 上可见且返回 3.8 所列字段（评审 Issue 27）
   - 依赖：4.2、5.5、6.4、7.1、3.8
-- [ ] 7.3 结构断言测试（替代源码文本扫描），**扫描域分层**（评审 Issue 25）：**可验证域** = `src/data/**` + `src/index.ts`（必然存在，`targets.length > 0` 由此成立）；**deferred 域** = `src/routes/**`、`src/client/**`（change 4 创建）、`src/skill/download.ts`（change 3 创建）——目录存在时才执行、用例名标记 `deferred`、并在本文件与 change 3/4 验收清单各登记一行。断言项：① `src/routes/**`、`src/client/**`（存在时）MUST NOT import `src/data/**`（允许 service 类型）；② 可验证域内除 `src/data/http.ts` 外零 `fetch(` / `http.request`（`src/skill/download.ts` 存在时作为第二条具名通道）；③ 17709 无 HTTP 请求、仅 `net.connect`；④ 源码与依赖中不存在 `order_stock` / `cancel_order` 调用路径；⑤ 每条扫描型用例先断言 `targets.length > 0`；⑥ **T0/T1/T2 入参 schema 无 `refresh`**（对三份工具 schema 做属性扫描，`keys` 非空）
+- [x] 7.3 结构断言测试（替代源码文本扫描），**扫描域分层**（评审 Issue 25）：**可验证域** = `src/data/**` + `src/index.ts`（必然存在，`targets.length > 0` 由此成立）；**deferred 域** = `src/routes/**`、`src/client/**`（change 4 创建）、`src/skill/download.ts`（change 3 创建）——目录存在时才执行、用例名标记 `deferred`、并在本文件与 change 3/4 验收清单各登记一行。断言项：① `src/routes/**`、`src/client/**`（存在时）MUST NOT import `src/data/**`（允许 service 类型）；② 可验证域内除 `src/data/http.ts` 外零 `fetch(` / `http.request`（`src/skill/download.ts` 存在时作为第二条具名通道）；③ 17709 无 HTTP 请求、仅 `net.connect`；④ 源码与依赖中不存在 `order_stock` / `cancel_order` 调用路径；⑤ 每条扫描型用例先断言 `targets.length > 0`；⑥ **T0/T1/T2 入参 schema 无 `refresh`**（对三份工具 schema 做属性扫描，`keys` 非空）
   - 产物：`test/structure.test.ts`
   - 验收：6 组用例名全绿；`deferred` 用例在目录缺失时标记为 `deferred` 而非 skip/通过；证据：临时创建 `src/routes/index.ts` 加一行 `import '../../data/http.js'` 后 `deferred` 用例转红（手工验证后删除）
   - 依赖：1.3、7.1、4.5
+  - **实施证据（2026-09-27）**：转红验证已做——临时创建 `src/routes/__structure_probe_tmp.ts`（`import '../../data/http.ts'`）→ `test/structure.test.ts` 用例①转红；删除后恢复全绿。deferred 三目标（`src/routes/**`、`src/client/**`、`src/skill/download.ts`）在本时点均已存在，检查**实际执行**（非空过）。
 - [ ] 7.4 DSH 会话验收（人工核对并记录）：`ctx.tools` 可见 `get_trade_date` / `get_limit_reason` / `get_concepts`、可调、返回带来源的规范化数据（本 change 无金额/市值字段，**不做单位验收**）
   - 产物：验收记录（会话 id + 三次调用输出摘要）
   - 验收：记录格式 `工具 | 入参 | available | requestedDate | businessDate/tradeDate | source | fetchedAt | 是否符合预期`；**日期字段一律 `YYYY-MM-DD`**（紧凑写法只允许出现在入参与源请求参数列）
   - 依赖：7.2
-- [ ] 7.5 deferred 结构断言登记（评审 Issue 25）：在 `test/structure.test.ts` 顶部以「deferred 清单」常量登记 `src/routes/**`、`src/client/**`（change 4）与 `src/skill/download.ts`（change 3），并在 `openspec/changes/review-page/tasks.md`、`openspec/changes/tq-skill-installer/tasks.md` 的验收清单里各留一条指向本用例的转正要求（跨 change 文件由对应 change 的 owner 落地，本 change 只提交登记文本）
+- [x] 7.5 deferred 结构断言登记（评审 Issue 25）：在 `test/structure.test.ts` 顶部以「deferred 清单」常量登记 `src/routes/**`、`src/client/**`（change 4）与 `src/skill/download.ts`（change 3），并在 `openspec/changes/review-page/tasks.md`、`openspec/changes/tq-skill-installer/tasks.md` 的验收清单里各留一条指向本用例的转正要求（跨 change 文件由对应 change 的 owner 落地，本 change 只提交登记文本）
   - 产物：`test/structure.test.ts`（deferred 常量）、登记文本（本 change 文档内）
   - 验收：三项目标在常量中各占一行且含目标 change 编号；本迭代 `pnpm test` 输出中它们以 `deferred` 命名呈现、不计为通过
   - 依赖：7.3
+  - **登记文本（本 change 只登记，跨 change 文件由对应 owner 落地）**：
+    - → change 4 `review-page` 验收清单补一条：「`src/routes/**`、`src/client/**` 的 import 白名单（MUST NOT import `src/data/**`，允许 service 类型）由 `test/structure.test.ts` 用例①（deferred 清单常量 `DEFERRED_SCAN_DOMAINS`）转正执行」。
+    - → change 3 `tq-skill-installer` 验收清单补一条：「`src/skill/download.ts` 为第二条具名出站通道且是 `src/skill/**` 内唯一 `fetch(` 调用点，由 `test/structure.test.ts` 用例②deferred 分支转正执行」。
+    - 本 change 内：三项目标在 `test/structure.test.ts` 顶部 `DEFERRED_SCAN_DOMAINS` 常量中各占一行且含目标 change 编号。
 
 ## 8. 文档、依赖与门禁
 
@@ -210,10 +216,11 @@
   - 产物：登记记录（本 change 文档内 + 提交给 vault-integration 的条目草稿）
   - 验收：登记条目文本含两条路径与「阶段 4 例外」表述；本 change 内可核（design Risks 已记）
   - 依赖：8.2
-- [ ] 8.4 `src/data/**` 各模块头注释回指 `docs/carryover.md` 台账行（源路径 + 偏离），格式与既有搬运模块一致
+- [x] 8.4 `src/data/**` 各模块头注释回指 `docs/carryover.md` 台账行（源路径 + 偏离），格式与既有搬运模块一致
   - 产物：`src/data/*.ts` 注释
   - 验收：`grep -rn "carryover" src/data/` 对每个承载移植口径的模块至少命中一次
   - 依赖：8.1、5.1、5.2、6.1
+  - **实施证据（2026-09-27）**：`grep -rn carryover src/data/` 对全部 13 个模块各命中 ≥1 次——`s7.ts`/`s5.ts`/`s8.ts` 头注释回指 docs/carryover.md §3.1 对应台账行（含偏离清单）；自建模块（http/guard/cache/normalize/deps/trade-date/limit-reason/concepts/health/date）头注释登记「无脚本来源」事实。台账行本身未改动（本任务不改台账）。
 - [ ] 8.5 待验证项 spike 记录（TQ 口径）：`get_gpjy_value.table_list` / `get_zdt_data` 的 `.SZ` 异常与盘后全 0 / `GP15` 判据——由实测（或 `tq-skill-installer` 侧证据）核验后写入 `docs/carryover.md` 台账；未核验前 MUST NOT 作为实现依据
   - 产物：台账 spike 行
   - 验收：行内含「实测日期 / 证据 / 结论（成立/证伪/仍未知）」；本 change 代码中无对应实现引用
@@ -226,10 +233,15 @@
   - 产物：门禁输出
   - 验收：三条命令退出码均为 0；`pnpm test` 中**可验证域**的扫描型用例全部执行（`targets.length > 0` 断言均在）且**无 `skip`**；`deferred` 用例（`src/routes/**`/`src/client/**`/`src/skill/download.ts`）以显式 `deferred` 标记呈现并在 change 3/4 验收清单各有一条登记（评审 Issue 25）
   - 依赖：全部
-- [ ] 8.8 日期格式唯一性核验（Round 2 收口）：全仓 grep 核验 `YYYYMMDD` 只出现在 ①目录/文件名模板参数与锚点、②天级缓存目录、③第三方源请求参数三处；契约/payload/工具返回中无紧凑日期；`src/data/**` 除 `src/data/date.ts` 外无自定义日期截断/拼接
+- [x] 8.8 日期格式唯一性核验（Round 2 收口）：全仓 grep 核验 `YYYYMMDD` 只出现在 ①目录/文件名模板参数与锚点、②天级缓存目录、③第三方源请求参数三处；契约/payload/工具返回中无紧凑日期；`src/data/**` 除 `src/data/date.ts` 外无自定义日期截断/拼接
   - 产物：核验记录（grep 命令 + 命中清单 + 逐条归类）
   - 验收：记录含 `grep -rnE "'[0-9]{8}'" src/`、`grep -rnE "replace\(/-/g|replace\(\[?\"-/|slice\(0, *10\)" src/` 两条命令的命中清单，且每条命中归属上述三类之一；`src/data/date.ts` 是唯一 `YYYY-MM-DD ⇄ YYYYMMDD` 实现
   - 依赖：4.5、3.3、5.1、6.1
+  - **核验记录（2026-09-27，grep 两条命令 + 补充扫描）**：
+    - 命令① `grep -rnE "'[0-9]{8}'" src/`：命中 1 条——`src/review/context.ts:69` 的 `'19700101'`（review 线代码；用途 = `resolveArea` 的目录/文件名模板 `date` 参数，归属**允许位置①目录/文件名模板参数**；该文件属 change 4 线，本 change 不改）。
+    - 命令② `grep -rnE "replace\(/-/g|replace\(\[?\"-/|slice\(0, *10\)" src/`：命中 1 条——`src/data/date.ts:35` 的 `iso.replace(/-/g, '')`，即**唯一转换实现自身**（非违规调用）。
+    - 补充扫描 `slice(0, *[46])|substring\(`（`src/data/`、`src/paths/`）：仅 `src/data/date.ts` 内 3 处（行 27/41/53），均为单点实现内部逻辑。
+    - 结论：紧凑日期在 `src/` 内只出现在允许位置——①目录/文件名模板参数（review 线 `'19700101'`）、②天级缓存目录（`cache.ts` 经 `toCompactDate` 折算）、③第三方源请求参数（`s7.ts`/`s5.ts` 经 `toCompactDate` 构造 date 参数、`s8.ts` 不带日期参数）；契约层/缓存 payload/工具返回一律 `YYYY-MM-DD`；`src/data/date.ts` 是唯一 `YYYY-MM-DD ⇄ YYYYMMDD` 实现，除它之外 `src/data/**` 无自定义日期截断/拼接（`src/data/normalize.ts` 的 `formatZonedIso` 为时间戳 `+08:00` 表示，非日期概念，不在 §1 管辖）
 - [ ] 8.9 跨 change 回写清单核销（评审 Issue 27/28/33）：按 `design.md` 的「跨 change 回写清单（本 change 负责侧）」逐条登记并核销——① change 5 预算预检引用 `traderKit.data.guardStatus()`（含其悬空的 Open Questions 12/13 指针改指本 change 的具名 Requirement）；② change 5 的 `errors` 分档口径与 `dateUnavailable`/`sourceUnavailable` 聚合表一致；③ change 4 D-16/6.3② 与 change 3 tasks 的出站通道措辞改为「两条具名通道」并补 `deferred` 转正登记；④ change 4/5 的护栏降级文案键改用具名枚举（`sessionRejected` / `budgetExhausted`）（跨 change 文件由对应 owner 落地，本 change 只提交登记文本 + 依赖声明）
   - 产物：`design.md` 的跨 change 回写清单（登记文本）
   - 验收：清单四条各含目标 change、目标符号（`guardStatus` / `errors` 枚举 / `src/skill/download.ts` / `sessionRejected`·`budgetExhausted`）与落地 owner；本 change 内所有引用 `guardStatus` 的表述均指向 `data-tool-contract` 的具名 Requirement（`grep -rn "guardStatus" openspec/changes/data-foundation/` 无悬空引用）

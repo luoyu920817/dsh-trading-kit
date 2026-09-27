@@ -179,6 +179,16 @@ describe('边界扫描：出站通道调用点（tasks 1.9；§7/R2-7 补充口�
   it('test/** 无 fetch / http 请求调用点（标记拼接构造，避免自匹配）', () => {
     const markers = ['fet' + 'ch(', 'http' + '.request']
     const targets = collectTestFiles()
+      // 具名豁免两类文件（其余 test/** 零出站标记）：
+      // ① test/structure.test.ts——数据线的扫描型断言文件（其正则字符串含标记字面）；
+      // ② test/helpers/data-stub.ts——change 2 零 mock 纪律的合法本地桩通道：
+      //    stubTransport 把官方源域名重定向到 127.0.0.1 本地桩并发起真实 fetch，
+      //    且带运行时回环断言（非 127.0.0.1 目标即抛错）；跨线登记见
+      //    data-foundation / review-page tasks 的登记条目。
+      .filter((f) => {
+        const norm = f.split('\\').join('/')
+        return !norm.includes('test/structure.test.ts') && !norm.includes('test/helpers/data-stub.ts')
+      })
     expect(targets.length).toBeGreaterThan(0)
     for (const file of targets) {
       const content = readFileSync(file, 'utf8')

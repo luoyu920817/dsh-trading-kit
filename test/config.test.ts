@@ -11,7 +11,7 @@ import { resolveArea } from '../src/paths/resolve.ts'
 function createFakeContext() {
   const registeredTools: string[] = []
   const provided: Record<string, unknown> = {}
-  return {
+  const ctx = {
     webServer: { register: () => () => {}, port: 41000, host: '127.0.0.1' },
     connection: {
       requestRejection: () => 401 as const,
@@ -19,11 +19,14 @@ function createFakeContext() {
     },
     logger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
     tools: { register: (tool: { name: string }) => { registeredTools.push(tool.name); return () => {} } },
-    provide: (key: string, api: unknown) => { provided[key] = api },
+    // provide 同时挂到 ctx 上（镜像真实 cordis 行为；后续装配线依赖 ctx.traderKit 可见）。
+    provide: (key: string, api: unknown) => {
+      provided[key] = api
+      ;(ctx as unknown as Record<string, unknown>)[key] = api
+    },
     effect: (body: () => unknown) => { body(); return () => {} },
-    registeredTools,
-    provided,
   }
+  return { ctx, registeredTools, provided }
 }
 
 describe('Config 默认值填充', () => {
@@ -81,9 +84,10 @@ describe('非法值拒绝', () => {
 
 describe('未配置 dataRoot → 挂载成功且写入报错', () => {
   it('空 dataRoot 挂载成功（工具注册 + service 提供），写入解析显式报错', () => {
-    const ctx = createFakeContext()
-    expect(() => apply(ctx as never, { dataRoot: '' })).not.toThrow()
-    expect(ctx.registeredTools.length).toBe(3)
+    const { ctx, registeredTools } = createFakeContext()
+    // 测试零真实出站：probe 显式关闭（生产默认开，owner 裁决 2026-09-27）。
+    expect(() => apply(ctx as never, { dataRoot: '', diagnostics: { probe: { enabled: false } } })).not.toThrow()
+    expect(registeredTools.length).toBe(3)
     expect(() => resolveArea('', 'review', { code: '600000', name: '浦发银行', date: '20260924' }, { forWrite: true }))
       .toThrow(/dataRoot/)
     // 磁盘无任何新增文件由 resolveArea 的纯解析性质保证（无 fs 调用）。

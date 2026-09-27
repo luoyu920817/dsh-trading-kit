@@ -1,0 +1,183 @@
+{
+  "meta": {
+    "fetchedAt": "2026-09-27T15:31:39.325Z",
+    "url": "https://flash-api.xuangubao.com.cn/api/stage2/plates_by_any_stock?symbol=600519.SS&fields=core_avg_pcp,plate_name,reason,plate_id,top_n_stocks",
+    "symbol": "600519.SS",
+    "fields": "core_avg_pcp,plate_name,reason,plate_id,top_n_stocks",
+    "httpStatus": 200,
+    "conclusion": "实测 2026-09-27（fields 扩写后）：code===20000；plate_id 返回（4/4，类型 number）；reason 返回（3/4，缺省概念为「天然无 reason」，非字段裁剪）。定稿：reason/plateId 源有值时必返；源缺失（含天然无 reason）时 best-effort 降级 null + notes（不阻塞 available）。",
+    "fieldStats": {
+      "platesTotal": 4,
+      "platesWithPlateId": 4,
+      "platesWithReason": 3,
+      "plateIdTypes": [
+        "number"
+      ]
+    }
+  },
+  "response": {
+    "code": 20000,
+    "message": "OK",
+    "data": {
+      "6346009": {
+        "core_avg_pcp": -0.013961206302127665,
+        "plate_id": 453,
+        "plate_name": "大消费",
+        "reason": "全国白酒行业领军企业，酱香型白酒代表；公司主导产品“贵州茅台酒”是我国大曲酱香型白酒的鼻祖和典型代表，集国家地理标志产品、有机食品和国家非物质文化遗产于一身",
+        "top_n_stocks": {
+          "items": [
+            {
+              "symbol": "002568.SZ",
+              "change_percent": 0.0332796565,
+              "stock_chi_name": "百润股份",
+              "price_change": 0.62
+            },
+            {
+              "symbol": "603983.SS",
+              "change_percent": 0.0164092664,
+              "stock_chi_name": "丸美生物",
+              "price_change": 0.51
+            },
+            {
+              "symbol": "600177.SS",
+              "change_percent": 0.0122100122,
+              "stock_chi_name": "雅戈尔",
+              "price_change": 0.1
+            },
+            {
+              "symbol": "002508.SZ",
+              "change_percent": 0.0060679612,
+              "stock_chi_name": "老板电器",
+              "price_change": 0.1
+            },
+            {
+              "symbol": "603816.SS",
+              "change_percent": 0.0049019608,
+              "stock_chi_name": "顾家家居",
+              "price_change": 0.11
+            }
+          ]
+        }
+      },
+      "13011026": {
+        "core_avg_pcp": -0.030244264847457625,
+        "plate_id": 514,
+        "plate_name": "高价股",
+        "top_n_stocks": {
+          "items": [
+            {
+              "symbol": "301583.SZ",
+              "change_percent": 0.0535343035,
+              "stock_chi_name": "托伦斯",
+              "price_change": 7.21
+            },
+            {
+              "symbol": "001326.SZ",
+              "change_percent": 0.0294392523,
+              "stock_chi_name": "联域股份",
+              "price_change": 3.15
+            },
+            {
+              "symbol": "300489.SZ",
+              "change_percent": 0.0270055299,
+              "stock_chi_name": "光智科技",
+              "price_change": 7.13
+            },
+            {
+              "symbol": "301529.SZ",
+              "change_percent": 0.0172774869,
+              "stock_chi_name": "福赛科技",
+              "price_change": 2.31
+            },
+            {
+              "symbol": "301373.SZ",
+              "change_percent": 0.0098263761,
+              "stock_chi_name": "凌玮科技",
+              "price_change": 1.33
+            }
+          ]
+        }
+      },
+      "16961441": {
+        "core_avg_pcp": -0.026889602184210524,
+        "plate_id": 47,
+        "plate_name": "白酒",
+        "reason": "全国白酒行业领军企业，酱香型白酒代表；公司主导产品“贵州茅台酒”是我国大曲酱香型白酒的鼻祖和典型代表，集国家地理标志产品、有机食品和国家非物质文化遗产于一身",
+        "top_n_stocks": {
+          "items": [
+            {
+              "symbol": "002342.SZ",
+              "change_percent": 0.0464190981,
+              "stock_chi_name": "巨力索具",
+              "price_change": 0.35
+            },
+            {
+              "symbol": "002419.SZ",
+              "change_percent": -0.0043763676,
+              "stock_chi_name": "天虹股份",
+              "price_change": -0.02
+            },
+            {
+              "symbol": "600238.SS",
+              "change_percent": -0.0049019608,
+              "stock_chi_name": "ST椰岛",
+              "price_change": -0.02
+            },
+            {
+              "symbol": "002374.SZ",
+              "change_percent": -0.0061728395,
+              "stock_chi_name": "中锐股份",
+              "price_change": -0.02
+            },
+            {
+              "symbol": "000858.SZ",
+              "change_percent": -0.0095251635,
+              "stock_chi_name": "五 粮 液",
+              "price_change": -0.67
+            }
+          ]
+        }
+      },
+      "24364114": {
+        "core_avg_pcp": -0.013457365523376622,
+        "plate_id": 258,
+        "plate_name": "白马股",
+        "reason": "白酒第一品牌，茅台酒是世界三大名酒之一；公司主导产品“贵州茅台酒”是大曲酱香型白酒的代表，具有国家地理标志产品、有机食品和国家非物质文化遗产的多重身份；独特酿造技艺与赤水河流域农业生产深度融合，采用季节性生产方式，色清透明、酱香突出、入口柔绵等特质闻名于世",
+        "top_n_stocks": {
+          "items": [
+            {
+              "symbol": "601088.SS",
+              "change_percent": 0.0173692014,
+              "stock_chi_name": "中国神华",
+              "price_change": 0.82
+            },
+            {
+              "symbol": "600019.SS",
+              "change_percent": 0.0156521739,
+              "stock_chi_name": "宝钢股份",
+              "price_change": 0.09
+            },
+            {
+              "symbol": "600941.SS",
+              "change_percent": 0.0108921162,
+              "stock_chi_name": "中国移动",
+              "price_change": 1.05
+            },
+            {
+              "symbol": "600900.SS",
+              "change_percent": 0.00997151,
+              "stock_chi_name": "长江电力",
+              "price_change": 0.28
+            },
+            {
+              "symbol": "601766.SS",
+              "change_percent": 0.0084459459,
+              "stock_chi_name": "中国中车",
+              "price_change": 0.05
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -11,7 +11,7 @@ function createFakeContext() {
   const registeredTools: string[] = []
   const provided: Record<string, unknown> = {}
   const effects: string[] = []
-  return {
+  const ctx = {
     webServer: { register: () => () => {}, port: 41000, host: '127.0.0.1' },
     connection: {
       requestRejection: () => 401 as const,
@@ -19,12 +19,14 @@ function createFakeContext() {
     },
     logger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
     tools: { register: (tool: { name: string }) => { registeredTools.push(tool.name); return () => {} } },
-    provide: (key: string, api: unknown) => { provided[key] = api },
+    // provide 同时挂到 ctx 上（镜像真实 cordis 行为；后续装配线依赖 ctx.traderKit 可见）。
+    provide: (key: string, api: unknown) => {
+      provided[key] = api
+      ;(ctx as unknown as Record<string, unknown>)[key] = api
+    },
     effect: (body: () => unknown, effectName: string) => { body(); effects.push(effectName); return () => {} },
-    registeredTools,
-    provided,
-    effects,
   }
+  return { ctx, registeredTools, provided, effects }
 }
 
 describe('dsh-trader-kit 装配面', () => {
@@ -33,13 +35,14 @@ describe('dsh-trader-kit 装配面', () => {
   })
 
   it('注册了 3 个数据面工具（T0/T1/T2）+ 提供 traderKit service', () => {
-    const ctx = createFakeContext()
-    expect(() => apply(ctx as never)).not.toThrow()
-    expect(ctx.registeredTools.length).toBe(3)
-    expect(ctx.registeredTools).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
-    const api = ctx.provided.traderKit as { health: { status(): unknown } } | undefined
+    const { ctx, registeredTools, provided } = createFakeContext()
+    // 测试零真实出站：启动探测（diagnostics.probe）在单测中显式关闭（生产默认开）。
+    expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
+    expect(registeredTools.length).toBe(3)
+    expect(registeredTools).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
+    const api = provided.traderKit as { health: { status(): unknown } } | undefined
     expect(api).toBeDefined()
-    // 骨架阶段的 health.status() 可调用（真实探测随 tasks 7.1 落地）。
+    // health.status() 可调用（两段视图 { data, skill }）。
     expect(typeof api?.health.status()).toBe('object')
   })
 
