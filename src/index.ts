@@ -11,7 +11,7 @@
  * - skillInstaller   → change 3 tq-skill-installer（src/skill/index.ts）
  * - review           → change 4 review-page / change 5 daily-summary（src/review/index.ts）
  */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from './context-types.ts'
 import { registerProbe } from './routes/probe.ts'
 import { registerData } from './service/index.ts'
 import { registerSkillInstaller } from './skill/index.ts'
