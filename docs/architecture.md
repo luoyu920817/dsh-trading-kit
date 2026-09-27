@@ -52,11 +52,16 @@ dsh-trading）；只有本工作流的流程与判断 → 工作流层（自建�
 | 阶段 | 内容 | 来源 | 撞的边界（能力地图） |
 | --- | --- | --- | --- |
 | 1 骨架 | npm 包 → patch 行 → 插件树 | 自建 | 插件范式：cordis 生命周期、patch insert、dsh.plugin.json 双通道、宿主安装 |
-| 2 桥 | REST + SSE + tokenized URL | 自建 | 宿主 HTTP 面：桥的鉴权与事件出口（TDX 嵌入页的地基） |
-| 3 数据面 | connector-tdx + research-data | 搬运 | MarketDataService 契约、provider registry、路由选择 |
+| 2 桥 | REST + SSE + tokenized URL | 自建 | 宿主 HTTP 面：桥的鉴权与事件出口（TDX 嵌入页的地基）——**迭代一裁决（roadmap §5 M2-Q2）：独立桥阶段取消**，宿主 HTTP 面由插件路由直接验证（探针 + 复盘页） |
+| 3 数据面 | connector-tdx + research-data | 搬运 | MarketDataService 契约、provider registry、路由选择——**迭代一裁决：改为「三方接口工具（S7/S5/S8）+ TQ skill 安装器」，connector-tdx / research-data 不搬** |
 | 4 知识 | knowledge vault 引擎 | 搬运 + 适配 | 宿主服务提供/消费、OneDrive 并发容忍、mtime 增量 |
 | 5 工作流 | 盘后例行 job + 复盘 skill | 自建 | 宿主 agent 会话调度（typertGateway / tasks）、技能装配 |
 | 6 策略 | strategies + 嵌入页 | 搬运 + 扩展 | UI toolview、嵌入页 token 归属（E4 spike 结论落地） |
+
+### 4.1 宿主 HTTP 面与 TDX 嵌入页能力边界（spike-tdx-embed 实测结论，2026-09-27）
+
+- **宿主 HTTP 面**：插件经 `ctx.webServer.register({kind:'exact'|'prefix', path, handler})` 在宿主同一 node:http 服务器上挂自有路由（**宿主不代插件鉴权**——handler 首行自行调 `ctx.connection.requestRejection`）；URL 经挂载时打印（端口可漂移）。探针页常驻诊断：`GET /dsh-trader-kit/probe`。
+- **TDX 内嵌浏览器（实测，Chrome 81 / TdxW UA）**：可直接贴 http URL 打开同端口页面；ES2017 + Fetch + Promise 基线可解析；12 项内核特性探测全命中。**联动边界**：页面 → TDX 切标的用导航 `http://www.treeid/code_<代码>`（现网生产验证；6 种 JS 写法 0/6、window.open 被拦）；**TDX → 页面反向跟随不存在**（切换标的不改写内嵌页 hash）。详见 `docs/spikes/tdx-embed.md`。
 
 ## 5. 红线（不可让步项）
 

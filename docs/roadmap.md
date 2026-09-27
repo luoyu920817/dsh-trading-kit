@@ -93,6 +93,7 @@
 | 阶段 5 折算：本迭代交付「阶段 3 数据面子集 + 阶段 4 写分区子集 + 阶段 5 复盘 skill 子集」 | 立约 | 阶段 1 骨架已完成；阶段 6（嵌入页 + 策略盯盘）不在本迭代 |
 | D-TQ：页面所需业务日期/名称的取数边界（R2/R5 的 `get_match_stkinfo` / `HqDate` vs「TQ 不固化」） | **待裁决**（默认处置 = 选项 A） | 默认处置：名称走 T2/S8 → 历史卡 frontmatter → 仅代码；日期走 `resolveTradeDate`（`iteration-1-contracts §1`）。复审触发条件：owner 裁决选项 B，或「插件直调 17709」边界放开的裁决 |
 | E4：spike 提前 + 选股公式方言并入清单（§4） | 拍板，但本迭代**部分未落地** | change 1 探针按 Non-Goals 排除方言探测；选股语句方言探测归阶段 6 前独立 spike，本条不再视为已闭环 |
+| spike-tdx-embed 结论（2026-09-27 实测） | **P1 受限 → 采用 http 同端口页面**：TDX 内嵌内核 Chrome 81/TdxW，探针页渲染与传参 PASS；联动 6 写法 TDX 侧 0/6（window.open 被拦）、反向跟随不存在；**联动改用 `http://www.treeid/code_<代码>` 导航**（现网生产验证）；C 层免认证只读已签字采纳 | change 4 页面「在 TDX 打开标的」用 treeid 链接；B1 不自动跟随 TDX 选中（输码/页面内点选为入口）；写接口仍只认 A 层（TDX 内未验证存活 → 页面只读降级 + DSH 侧写卡）；报告 `docs/spikes/tdx-embed.md` |
 
 **本迭代 change 映射**：change 1 `spike-tdx-embed`（可行性闸门）/ 2 `data-foundation`
 （数据目录范式 + T1/T2 + T0 `get_trade_date`）/ 3 `tq-skill-installer`（TQ skill 安装器）/

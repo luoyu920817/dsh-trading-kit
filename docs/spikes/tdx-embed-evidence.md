@@ -50,6 +50,13 @@
   ③ **A 层 cookie 存活 UNKNOWN**——`auth:"none"` 只证明 C 层；写接口认证结论须 dtk-probe-a → a2 两步实测。
 - **脱敏检查**：通过（仅 UA、测试代码 600000/123123，无账户信息）。
 
+## E3 · 联动与反向跟随（owner 口述结论，2026-09-27）
+
+1. **正向联动 TDX 侧 0/6**：点击探针页 6 种写法按钮，TDX 主界面**均未切换标的**（owner 目视确认）；写法 4（window.open）另证被 TDX 拦截（返回 null）。页面侧派发记录见 E2。
+2. **反向跟随 FAIL**：以 `http://127.0.0.1:3080/dsh-trader-kit/probe#xxxxxx` 作为配置入口时，TDX 内切换标的页面不跟随——`href` 停在初始 `#880476`（owner 实测）。
+3. **现网联动通道指认**：owner 指认 `file:///D:/TDX_HOME/webs/company/涨停炸板时间轴.html` 为可联动先例；仓内核读（只读）确认其联动实现 = **导航至 `http://www.treeid/code_<代码>`**（L615；同机制另见 `AAAAjxbkpl*.html`、`ZTGJ2NIU.html`、`Excel文档转网页.html` 等 5+ 生产页面）——TDX 内嵌浏览器拦截该内部伪协议并切换主界面标的。该页无反向接收机制（列表页，数据走自身 API）。
+- 脱敏：无截图（口述 + 仓内核读），无敏感信息。
+
 ## 待办（owner 在 TDX 内操作后追加）
 
 - [ ] E2 · P1：TDX 配置入口指向 http 地址（两步登录）→ 截图 + 记录 TDX 版本、内嵌 UA、`auth` 取值
