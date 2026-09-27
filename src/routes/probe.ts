@@ -234,19 +234,27 @@ interface ProbeLogger {
 }
 
 function resolveProbeLogger(ctx: Context): ProbeLogger {
+  const sinks: ProbeLogger[] = []
+  // 实测宿主 0.1.7-rc.1 下 cordis 命名 logger 的 info 不落 stdout（级别/导出器过滤），
+  // 而挂载期三行 URL 与 B 层 token 是人工核对清单首项（tasks 1.1/2.1），必须出现在
+  // `dsh web` 控制台——tasks 1.1 允许的第二通道 console 双写兜底（测试经注入 logger 收录）。
   const service: unknown = ctx.logger
   if (typeof service === 'function') {
     try {
       const named: unknown = (service as (name?: string) => unknown)('dsh-trader-kit')
       const candidate = named as ProbeLogger | null | undefined
       if (candidate !== null && candidate !== undefined && typeof candidate.info === 'function' && typeof candidate.warn === 'function') {
-        return candidate
+        sinks.push(candidate)
       }
     } catch {
-      // 命名 logger 不可用时降级 console。
+      // 命名 logger 不可用时仅用 console。
     }
   }
-  return console as unknown as ProbeLogger
+  sinks.push(console as unknown as ProbeLogger)
+  return {
+    info: (...args) => { for (const s of sinks) s.info(...args) },
+    warn: (...args) => { for (const s of sinks) s.warn(...args) },
+  }
 }
 
 /** `mountProbe` 选项（生产 = registerProbe 传 DIAGNOSTICS_DEFAULT；结构断言用参数断言两态）。 */
