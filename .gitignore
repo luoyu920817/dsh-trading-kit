@@ -3,3 +3,7 @@ lib/
 coverage/
 *.tsbuildinfo
 .DS_Store
+
+# skill 安装器产物区（本仓默认安装根与暂存区；目标仓库仅提示不代改——tq-skill-installer tasks 2.4）
+.dsh/skills/
+.dsh/.dsh-trader-kit-tmp/

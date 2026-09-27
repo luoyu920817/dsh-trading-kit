@@ -1,8 +1,8 @@
 /**
  * 内容哈希与目录哈希（tasks 3.7）。
  *
- * 表述纪律：哈希只用于检测「相对上一次安装的本地漂移」（D-9），MUST NOT
- * 被表述为「验证了官方性」——官方无公开哈希/签名（design F9）。
+ * 表述纪律：哈希只用于检测「相对上一次安装的本地漂移」（D-9），不构成
+ * 官方性校验——官方无公开哈希/签名（design F9）。
  */
 
 import { createHash } from 'node:crypto'
@@ -30,20 +30,31 @@ export interface DirFileHash {
 
 /** 递归列出目录内全部文件的哈希（排序后的稳定顺序；目录不存在 → null）。 */
 export async function listDirHashes(dir: string): Promise<DirFileHash[] | null> {
-  let entries: Awaited<ReturnType<typeof fsp.readdir>>
+  const out: DirFileHash[] = []
+  async function walk(current: string): Promise<void> {
+    let dirents
+    try {
+      dirents = await fsp.readdir(current, { withFileTypes: true })
+    } catch {
+      return // 不可读子目录跳过（不炸整个清单）
+    }
+    for (const entry of dirents) {
+      const absPath = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        await walk(absPath)
+      } else if (entry.isFile()) {
+        const relPath = path.relative(dir, absPath).split(path.sep).join('/')
+        const stat = await fsp.stat(absPath)
+        out.push({ relPath, absPath, sha256: await sha256File(absPath), size: stat.size })
+      }
+    }
+  }
   try {
-    entries = await fsp.readdir(dir, { withFileTypes: true, recursive: true })
+    await fsp.stat(dir)
   } catch {
     return null
   }
-  const out: DirFileHash[] = []
-  for (const entry of entries) {
-    if (!entry.isFile()) continue
-    const absPath = path.resolve(dir, entry.name)
-    const relPath = path.relative(dir, absPath).split(path.sep).join('/')
-    const stat = await fsp.stat(absPath)
-    out.push({ relPath, absPath, sha256: await sha256File(absPath), size: stat.size })
-  }
+  await walk(dir)
   out.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0))
   return out
 }

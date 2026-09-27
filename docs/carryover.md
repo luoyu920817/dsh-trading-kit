@@ -65,6 +65,30 @@
 > 内容与「偏离清单」逐条复核）。
 > `src/data/**` 模块头注释 MUST 回指本表行（任务见 change `data-foundation` tasks 8.4）。
 
+## 3.2 外部资产台账（下载的第三方产物）
+
+> 2026-09-27 增补（change `tq-skill-installer` tasks 5.1，有网环境实测）。
+> TQ skill 是**下载的第三方产物**，非本仓搬运：适用 AGENTS 溯源纪律，字段与
+> `traderKit.skill.status()` 输出的 `source` 段同组（源地址 / 首次获取时间 /
+> 版本 / SHA-256 / 适用范围）。换机或重建后仅凭本台账可复核来源；换源（配置
+> `skill.sourceUrl`）后须追加一行，不覆盖旧行。
+
+| 字段 | 值 |
+| --- | --- |
+| 资产 | TDX 官方 TQ-Local skill 包（zip 分发，单条目 `SKILL.md`） |
+| 源 URL（`skill.sourceUrl` 默认值） | `https://www.tdx.com.cn/products/autoup/skills/tdx-tq-local.zip` |
+| 首次获取时间（`source.firstFetchedAt`） | 2026-09-27T11:37:40Z |
+| 响应标识（`source.id` = etag\|lastModified 原样） | `"6aafc833-7681"` \| `Sun, 20 Sep 2026 11:49:07 GMT` |
+| 版本（`SKILL.md` frontmatter `version`） | `1.2.0（2026-09-20）`（语义化版本 `1.2.0`） |
+| zip SHA-256（`archiveHash`） | `09f4c39c4641c14f6c283ca402ea53a351ee4e97a4f3593d159ba13ee16ee0a6`（30337 字节） |
+| `SKILL.md` SHA-256（`contentHash`） | `6d5fc828d427dc5e3e5996dcdb951bab44ac6a077736fa2a7b88bbec5140aa59`（215314 字节） |
+| 适用范围 | 需求 1–5 的 TQ 数据面前置（agent 以 skill 形态读取执行；change 3 安装器维护、change 5 不消费） |
+| 快照与实测清单 | `test/fixtures/official/tdx-tq-local-snapshot.zip` + `test/fixtures/official-zip-manifest.json`（响应头/条目/布局/ETag 实测结论） |
+| 已弃用 vault 副本 | `<vault>/.claude/skills/tdx-tq-local/`（v1.0.12 / 106 KB）——**不读、不写、不校验、不迁移、不删除**，仅作历史示例记录 |
+
+> 复核方法：重抓源 URL → 对比 ETag/Last-Modified（不同即有更新）→ 计算新
+> SHA-256 并在本表追加一行；`status()` 的 `contentHash` 与本表逐字符比对。
+
 ## 4. 简化红利与遗留
 
 - **vault 化无历史包袱**：本工程没有 cards.json，vault-fs 直接是唯一 store
