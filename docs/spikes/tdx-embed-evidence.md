@@ -31,6 +31,25 @@
 - **证明什么**：探针页全部页面侧机制（自检/传参解析/hashchange 时间线/联动按钮布点/postMessage 回环）在 Chromium 146 内核上端到端可用；A 层 cookie 会话持续有效（第二次加载仍 `auth:"cookie"`）。
 - **不证明什么**：同 E1——TDX 内嵌浏览器（更低版本内核）的渲染、传参、联动响应仍待 E2–E6。
 
+## E2 · **TDX 内嵌浏览器实机验证（P1 主判据）——渲染/传参 PASS**
+
+- **获取时间**：2026-09-27T13:51:21Z（页面注入时间戳）/ owner 粘贴页面自检全文 / 归档 22:0x 本地
+- **环境**：**TDX 内嵌浏览器**，UA = `Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36 TdxW`（Chrome 81 内核 + TdxW 标识；NT 6.1 兼容层）
+- **进入方式**：owner 在 TDX 内嵌浏览器地址栏直接粘贴 `http://127.0.0.1:3080/dsh-trader-kit/probe#600000`（免认证 C 层入口）——**P1 配置入口事实：TDX 内嵌浏览器可直接导航到任意 http URL**
+- **观察到的事实（页面自检全文，owner 提供）**：
+  1. `window.__PROBE__ = {"auth":"none","status":200,"port":3080,"basePath":"/dsh-trader-kit","injectedAt":"2026-09-27T13:51:21.899Z"}`——**C 层免认证放行在 TDX 内生效**；
+  2. **渲染 PASS**：页面完整渲染，ES2017 + Fetch + Promise 基线语法在 Chrome 81 可解析（页面脚注自证行可见）；
+  3. **内核特性全可用**（Chrome 81 下 typeof 探测全命中）：Promise / fetch / WebSocket / EventSource / localStorage / sessionStorage / URLSearchParams / JSON / Object.assign / Array.prototype.includes / performance.now / navigator.sendBeacon；
+  4. **传参 PASS**：`hash 原值 600000` → `取值 600000（取自 hash，合法 6 位，前导零保留）`，query/path 缺失显式空态；
+  5. 输入框内容 `123123` 实时回显（6 字符）；
+  6. **点击联动·页面侧**：写法 1（onclick）触发；写法 2（element.click()）与写法 3（dispatchEvent）均派发（isTrusted=false/true 两条均有）；**写法 4（window.open）返回 null（被 TDX 拦截或未响应）**；写法 5（postMessage）发送且同源回环收到（origin=http://127.0.0.1:3080）；写法 6（location.hash）本次粘贴中未见记录（未点击或截断）。
+- **证明什么**：P1 判据中「渲染 PASS ∧ 传参 PASS」成立；TDX 内嵌浏览器可承载探针页；内核能力足够支撑 B1–B4 前端（ES2017 基线 + 全部探测 API）。
+- **不证明什么（三个待补维度）**：
+  ① **联动 TDX 侧响应 UNKNOWN**——页面侧派发 ≠ TDX 切标的，须 owner 目视确认（写法 4 已证实被拦）；
+  ② **hashchange UNKNOWN**——本次时间线只有 boot 行，owner 尚未在 TDX 内切换标的验证反向联动；
+  ③ **A 层 cookie 存活 UNKNOWN**——`auth:"none"` 只证明 C 层；写接口认证结论须 dtk-probe-a → a2 两步实测。
+- **脱敏检查**：通过（仅 UA、测试代码 600000/123123，无账户信息）。
+
 ## 待办（owner 在 TDX 内操作后追加）
 
 - [ ] E2 · P1：TDX 配置入口指向 http 地址（两步登录）→ 截图 + 记录 TDX 版本、内嵌 UA、`auth` 取值
