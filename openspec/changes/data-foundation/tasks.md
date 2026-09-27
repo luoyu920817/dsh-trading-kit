@@ -1,8 +1,8 @@
 ## 1. 配置面、依赖与装配
 
-- [ ] 1.1 `src/config.ts`：导出 `Config`（schemastery，沿 `DSH-better-sidebar/src/config.ts` 先例）——字段 `dataRoot: z.string().default('')`、`sources`（S7 `sign`/`ts`、S5、S8 的超时与重试）、`guard`（`maxConcurrency`/`minIntervalMs`/`maxBatch`/`dailyBudget`/`fullMarketGuard`/`sessionOverride: 'auto'|'on'|'off'`）、`diagnostics`（`probe.enabled` 默认 `true`、`probe.targets` 默认全选、`tdx17709.enabled` **默认 `false`**——**已定**：默认不触 17709 端口、仅登记不探测，需显式开启；理由见 `design.md` D-8 与 Open Questions 第 1 条）；处置既有 `src/index.ts` 的 `export interface TraderKitConfig`（迁移为从 `Config` 推导的类型或删除，MUST NOT 留两份配置类型）
+- [ ] 1.1 `src/config.ts`：导出 `Config`（schemastery，沿 `DSH-better-sidebar/src/config.ts` 先例）——字段 `dataRoot: z.string().default('')`、`sources`（S7 `sign`/`ts`、S5、S8 的超时与重试）、`guard`（`maxConcurrency`/`minIntervalMs`/`maxBatch`/`dailyBudget`/`fullMarketGuard`/`sessionOverride: 'auto'|'on'|'off'`）、`diagnostics`（`probe.enabled` 默认 `true`、`probe.targets` 默认全选、`tdx17709.enabled` **默认 `true`**——**owner 裁决 2026-09-27**：默认开启 17709 TCP 探测，覆盖评审 Issue 26③/29 的「默认 `false`」；显式置 `false` 才关闭；沿革见 `design.md` D-8 与 Open Questions 第 1 条）；处置既有 `src/index.ts` 的 `export interface TraderKitConfig`（迁移为从 `Config` 推导的类型或删除，MUST NOT 留两份配置类型）
   - 产物：`src/config.ts`、`src/index.ts`（差异）
-  - 验收：`pnpm typecheck` 通过；`export const Config` 存在且 `dataRoot` 默认值为空串；用例 `Config 默认值填充` / `非法值拒绝` 通过；**`tdx17709.enabled` 默认值断言为 `false`（已裁决：默认不触 17709，需显式开启）**（评审 Issue 26③/29）
+  - 验收：`pnpm typecheck` 通过；`export const Config` 存在且 `dataRoot` 默认值为空串；用例 `Config 默认值填充` / `非法值拒绝` 通过；**`tdx17709.enabled` 默认值断言为 `true`（owner 裁决 2026-09-27：默认开，覆盖评审 Issue 26③/29 的 `false`）**
   - 依赖：无
 - [ ] 1.2 `package.json`：新增依赖 `schemastery`（dependencies，先例 ^3.18.0）、`@deepseek-ai/dsh-tools`（`defineTool` 来源；沿先例放 peerDependencies + devDependencies）；`cordis.patch.yml` 增加 `config` 段，**只写占位符/注释示例**（MUST NOT 写个人 vault 绝对路径，MUST NOT 写 `sign`/`ts` 现值；本机实例路径与本机签章走 profile 层或注释示例）
   - 产物：`package.json`、`cordis.patch.yml`
@@ -18,7 +18,7 @@
   - 依赖：1.3
 - [ ] 1.5 单测（零 mock，真实临时目录 + 真实本地 http 桩）：`dataRoot` 空值 → 挂载成功且写入报错；非法 guard 值被 schema 拒绝；`diagnostics.tdx17709.enabled=false` → 探测项状态为「未探测」
   - 产物：`test/config.test.ts`
-  - 验收：用例名 `未配置 dataRoot → 挂载成功且写入报错`、`非法 guard 值被拒绝`、`关闭 17709 探测记为未探测` 全绿；另断言默认配置下 17709 项为「未探测」（与 1.1 的默认值一致）
+  - 验收：用例名 `未配置 dataRoot → 挂载成功且写入报错`、`非法 guard 值被拒绝`、`关闭 17709 探测记为未探测` 全绿；另断言**默认配置下 17709 项参与探测**（enabled 默认 `true`，owner 裁决 2026-09-27；显式置 `false` 才记「未探测」，与 1.1 的默认值一致）
   - 依赖：1.1、1.3
 
 ## 2. 数据目录范式

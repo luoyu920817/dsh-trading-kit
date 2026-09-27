@@ -343,7 +343,7 @@
 #### Scenario: TdxW 未启动
 
 - **WHEN** 探测时 `127.0.0.1:17709` 不可达且 `diagnostics.tdx17709.enabled=true`
-- **THEN** 健康状态标记 TQ-Local 不可达并给出「通达信客户端是否已启动并登录」文案，插件仍正常挂载、工具仍可调用（默认 `false` 时该项记为「未探测」、本场景不适用）
+- **THEN** 健康状态标记 TQ-Local 不可达并给出「通达信客户端是否已启动并登录」文案，插件仍正常挂载、工具仍可调用（owner 裁决后默认即 `true`，本场景在默认配置下适用；显式置 `false` 时该项记为「未探测」、本场景不适用）
 
 #### Scenario: 三方源不可达
 
@@ -368,4 +368,4 @@
 #### Scenario: `diagnostics` 配置面
 
 - **WHEN** 审查 `src/config.ts` 的 `diagnostics` 字段
-- **THEN** 字段定义含 `probe.enabled`（布尔，默认 `true`）与 `probe.targets`（`s7`/`s5`/`s8`/`tdx17709` 子集，默认全选）、`tdx17709.enabled`（布尔，**默认 `false`**——本迭代「仅登记、不探测」，需 owner 显式置 `true` 才做 17709 TCP 探测；理由见 `design.md` D-8 与 Open Questions 第 1 条）；关闭后探测项状态记为「未探测」而非「不可用」
+- **THEN** 字段定义含 `probe.enabled`（布尔，默认 `true`）与 `probe.targets`（`s7`/`s5`/`s8`/`tdx17709` 子集，默认全选）、`tdx17709.enabled`（布尔，**默认 `true`**——owner 裁决 2026-09-27 改定：默认开启 17709 TCP 探测，覆盖评审 Issue 26③/29 的「默认 `false`」；关闭后探测项状态记为「未探测」而非「不可用」）
