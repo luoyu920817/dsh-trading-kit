@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- P2 跳板页（spike-tdx-embed tasks 2.2）：file:// 就地打开 → location.replace 跳转到本地探针页（带 hash 传参）。
+     用法：在 TDX 内嵌浏览器里以 file:// 方式打开本文件（或 TDX 支持的本地页配置入口指向本文件）。
+     前置：若 TDX 内嵌浏览器尚未种 cookie，先用「登录 URL」完成两步第一步（303 铸 cookie），
+     再打开本页——否则跳转后探针页返回 401（这本身就是 P2 认证障碍的实测证据，截图留存即可）。
+     注意：本文件不含 token；服务器重启后 cookie 失效，需重新两步登录。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dsh-trader-kit P2 跳板</title>
+</head>
+<body>
+<p>P2 跳板页：3 秒后跳转到本地探针页（hash 携带测试代码 600000）。若未见跳转，说明 TDX 内核阻止了 file:// → http 导航（记 FAIL 并截图）。</p>
+<script>
+// ES5 写法（TDX 老内核兼容）；跳转目标不带 token——认证只认 cookie（A 层）。
+window.location.replace('http://127.0.0.1:3080/dsh-trader-kit/probe#600000');
+</script>
+</body>
+</html>
