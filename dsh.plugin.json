@@ -1,0 +1,13 @@
+{
+  "id": "dsh-personal/dsh-trader-kit",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "个人 A 股交易工作流插件：盘后复盘闭环、题材推导、历史统计、策略盯盘（私有插件，不入公共市场）",
+  "engines": {
+    "dsh": ">=0.1.5-rc.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  }
+}

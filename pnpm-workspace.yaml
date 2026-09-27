@@ -1,0 +1,5 @@
+# pnpm≥10 生命周期脚本默认拒绝，strict 模式下未批准直接报错；esbuild 的 postinstall
+# 是平台二进制校验，显式放行（沿 dsh-trading 同款契约，pnpm 11 键为 allowBuilds）。
+strictDepBuilds: true
+allowBuilds:
+  esbuild: true

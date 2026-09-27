@@ -1,0 +1,45 @@
+{
+  "name": "dsh-trader-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "个人 A 股交易工作流插件（DSH 宿主）：盘面梳理、题材推导、每日闭环结论、历史统计、策略盯盘——知行合一。从 0 构建，基础设施按需直接搬运自 dsh-trading。",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "lib/index.d.ts",
+      "default": "lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "dsh.plugin.json",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsdown",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lightweight-charts": "^5.2.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0",
+    "tsdown": "^0.22.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  }
+}

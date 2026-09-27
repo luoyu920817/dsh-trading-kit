@@ -1,0 +1,14 @@
+# dsh-trader-kit bundle patch
+#
+# 装配语义沿 DSH-better-sidebar 的 bundle patch 先例：宿主经 profile bundles
+# （`dsh plugin --profile <name> add dsh-trader-kit` 的 file:/本地渠道，或 profile
+# 自身 cordis.patch.yml 的手工挂载行）合并本 patch 后，`dsh-trader-kit` 作为
+# cordis 插件行进入插件树。
+#
+# 个人工程、单实例挂载：不需要 better-sidebar 那种聚合双挂载守卫表达式。
+#
+# 阶段 2（桥）起 config 将按需扩展；当前无配置面。
+# （格式依据：E:\work\code\open\dsh-plugins\DSH-better-sidebar\cordis.patch.yml）
+- insert:
+    - id: trader-kit
+      name: 'dsh-trader-kit'
