@@ -60,20 +60,21 @@ export const DIAGNOSTICS_DEFAULT = true
 
 /**
  * C 层未认证只读开关：**代码常量，非配置项**（R2-6 定案 ②；MUST NOT 新增配置
- * 字段，`Config` 归 change 2）。默认 false = 未认证一律 401/403。
+ * 字段，`Config` 归 change 2）。
  *
- * 置 true 前必须取得 owner 签字（签字时间与范围记入 docs/roadmap.md）；签字未
- * 取得时本常量 MUST 保持 false。启用前必须显式定义并申报的放宽点（不得默认放宽）：
- * ① `Origin: null` 的例外范围（仅限哪些 file:// 跳板页/路径）；
- * ② `Sec-Fetch-Site: cross-site` 的例外范围；
- * ③ 放行方法白名单（只读诊断应仅 GET）；
- * ④ 放行路径白名单（仅 PROBE_PATH，不外溢宿主其它路径）；
- * ⑤ 能力边界 = 只读诊断、无任何写接口；业务写入 MUST NOT 走 C 层。
- * 先例依据：DSH-better-sidebar trust-fence.ts 拒 `Origin: null` 与 `cross-site`，
- * 且自述「这是 DNS-rebinding/跨站防御，不是认证」——因此 C 层是**新增本地安全面**
- * （同机进程可读），不是放宽已有认证。
+ * **owner 签字沿革：2026-09-27 owner 签字采纳 C 层（动机 = TDX 内嵌浏览器不保证
+ * 携带 cookie，需免认证只读入口做承载验证），常量自此为 `true`。**
+ * 放宽点（签字范围，MUST NOT 默认外溢）：
+ * ① 放行路径白名单 = 仅 `PROBE_PATH`（不外溢宿主其它路径）；
+ * ② 放行方法白名单 = 仅 GET（只读；非 GET 走 405）；
+ * ③ 仅救 401（无凭据）——403 跨站栅栏不救援（栅栏是 DNS-rebinding/跨站防御，不是
+ *    认证；better-sidebar trust-fence 先例）；
+ * ④ 服务端仅绑 127.0.0.1（loopback），未认证可读面 = 同机进程；
+ * ⑤ 能力边界 = 只读诊断、无任何写接口；**业务写入 MUST NOT 走 C 层**（`§12.1`：
+ *    写接口认证 = A 层 cookie 硬门槛，change 4 落地时不受本签字影响）。
+ * 签字时间与范围已记入 docs/roadmap.md 安全面决策（spike tasks 1.7/4.5）。
  */
-export const UNAUTHENTICATED_READONLY_DEFAULT = false
+export const UNAUTHENTICATED_READONLY_DEFAULT = true
 
 /** 服务端按请求注入的认证判定取值（D-2/R2-8：拒绝态不设枚举取值，页面不渲染）。 */
 export type ProbeAuthKind = 'cookie' | 'diagnostic-token' | 'none'
@@ -113,8 +114,9 @@ export type ProbeRouteHandler = (req: TraderKitHttpRequest, res: TraderKitHttpRe
  * 判定顺序（spec「认证流程」逐字）：
  * 1. 首行 `requestRejection` —— 403（栅栏）立即拒绝，任何 token 不救援；
  * 2. 401（无 cookie）→ B 层 `?token=` 常数时间比对，命中 → 200 `diagnostic-token`；
- * 3. B 层未命中 → C 层开关（默认 false）→ 未启用则 401；
+ * 3. B 层未命中 → C 层开关（owner 2026-09-27 签字后默认 true）→ 未启用则 401；
  * 4. `requestRejection` 放行（A 层 cookie）→ 方法校验（非 GET 405）→ 200 `cookie`。
+ * B/C 放行分支同样强制仅 GET（只读放宽点，见 C 层常量注释）。
  */
 export function createProbeHandler(deps: ProbeHandlerDeps): ProbeRouteHandler {
   return function probeHandler(req: TraderKitHttpRequest, res: TraderKitHttpResponse): void {
@@ -125,13 +127,22 @@ export function createProbeHandler(deps: ProbeHandlerDeps): ProbeRouteHandler {
       if (rejection === 401) {
         // B 层（回退 1）：插件自有诊断 token。命中即放行，认证态记 'diagnostic-token'
         //（与 A 层 'cookie' 在证据上可区分）。业务写入 MUST NOT 依赖本层（§12.1）。
+        // 放宽点：只读 = 仅 GET（非 GET 405）。
         if (hasValidDiagnosticToken(req, deps.diagnosticToken)) {
+          if (req.method !== 'GET') {
+            writeRejection(res, 405, 'GET')
+            return
+          }
           writeProbePage(res, deps, 'diagnostic-token')
           return
         }
-        // C 层（回退 2）：未认证只读诊断页。默认关闭（false）→ 未认证仍 401。
-        // 启用前提（owner 签字 + 放宽点申报）见 UNAUTHENTICATED_READONLY_DEFAULT 注释。
+        // C 层（回退 2）：未认证只读诊断页。签字沿革与放宽点见
+        // UNAUTHENTICATED_READONLY_DEFAULT 注释（2026-09-27 签字采纳，仅 GET、仅本路由）。
         if (deps.unauthenticatedReadonly) {
+          if (req.method !== 'GET') {
+            writeRejection(res, 405, 'GET')
+            return
+          }
           writeProbePage(res, deps, 'none')
           return
         }

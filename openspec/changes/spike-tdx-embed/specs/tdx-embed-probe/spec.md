@@ -146,7 +146,7 @@ spike 实测 MUST 遵守时间盒与尝试上限：单路径（P1/P2/P3）总耗
 #### Scenario: C 层开关为代码常量且默认关闭
 
 - **WHEN** 审查 C 层未认证只读能力
-- **THEN** 该能力由代码常量 `UNAUTHENTICATED_READONLY_DEFAULT` 控制且默认 `false`；未取得 owner 签字时该常量 MUST NOT 被置为 `true`，未认证请求仍返回 401/403；报告记录签字时间与放宽点范围（若有）
+- **THEN** 该能力由代码常量 `UNAUTHENTICATED_READONLY_DEFAULT` 控制；**签字沿革：owner 于 2026-09-27 签字采纳 C 层，常量自此置为 `true`——放宽点 = 仅本插件探针路由、仅 GET 只读、仅救 401（403 跨站栅栏不救援）、服务端仅绑 127.0.0.1；业务写入通道 MUST NOT 走该层（`§12.1` 不变）**。签字前该常量 MUST 保持 `false`；「未认证请求返回 401/403」的关闭态行为由用例以注入 `unauthenticatedReadonly=false` 的方式继续覆盖；报告记录签字时间与放宽点范围
 
 #### Scenario: 构建产物与发包白名单
 

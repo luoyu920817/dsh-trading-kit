@@ -40,7 +40,7 @@
   - 产物：登录 URL 打印（1.1）+ 挂载时 `crypto.randomBytes` 生成诊断 token（仅内存 + 日志）+ 路由层常数时间比对（`?token=` 不匹配 → 401）
   - 验收：报告与 README/注释写明 B 层四项边界（来源 = 插件生成、有效期 = 进程生命周期、作用域 = 仅 `<basePath>/probe`、URL 明文风险）；**业务写入 MUST NOT 依赖 B 层**（写接口认证机制由 4.2 的必输出项「写接口认证结论」定义）；单测断言 token 缺失/错误 → 401、正确 → 200 且注入 `window.__PROBE__.auth === 'diagnostic-token'`（与 A 层 `'cookie'` 可区分）
   - 依赖：1.5；design D-3（评审 Issue 1/2、R2-8；**MUST NOT 校验宿主 `launchToken`——无此 API**）
-- [x] 1.7 C 层未认证只读开关（**代码常量，非配置项**：`UNAUTHENTICATED_READONLY_DEFAULT = false`，默认关闭；置 `true` 前 MUST 取得 owner 签字）
+- [x] 1.7 C 层未认证只读开关（**代码常量，非配置项**：`UNAUTHENTICATED_READONLY_DEFAULT`；**owner 2026-09-27 签字采纳，常量已置 `true`**——签字时间/放宽点/边界见 `docs/roadmap.md` §5.0 与常量注释；关闭态行为由测试注入持续覆盖）
   - 产物：C 层开关常量 + 放宽点定义（`Origin: null` / `Sec-Fetch-Site: cross-site` 的例外范围、放行方法与路径白名单）
   - 验收：常量默认值为 `false`，未认证请求仍 401/403；签字未取得时该常量 MUST 保持 `false`（在代码注释与报告中写明签字要求与既定默认值语义）；**MUST NOT 为它新增配置字段**（`Config` 归 change 2，`§11`）；签字时间与范围记入 `docs/roadmap.md`
   - 依赖：1.5；design D-1（配置面）/ D-3（`trust-fence.ts` 先例拒 `Origin: null`/`cross-site`，自述「不是认证」）；spec「C 层开关为代码常量且默认关闭」
@@ -121,7 +121,7 @@
   - 产物：回退分支说明段
   - 验收：写明 CORS/PNA 与 `Origin: null`/`cross-site` 的具体处置与签字要求；业务写入不因回退而放宽认证
   - 依赖：4.2、2.3
-- [ ] 4.5 若采纳 C 层（未认证 loopback 只读页）：提交 owner 签字并记录于 `docs/roadmap.md` 的安全面决策（含放宽点范围与时间），**并把代码常量 `UNAUTHENTICATED_READONLY_DEFAULT` 置为 `true`**（签字前 MUST 保持 `false`）
+- [x] 4.5 若采纳 C 层（未认证 loopback 只读页）：提交 owner 签字并记录于 `docs/roadmap.md` 的安全面决策（含放宽点范围与时间），**并把代码常量 `UNAUTHENTICATED_READONLY_DEFAULT` 置为 `true`**（**已完成：owner 2026-09-27 签字，roadmap §5.0 可指认；报告决策节引用在 4.1/4.2 落地时补**）
   - 产物：签字记录 + `docs/roadmap.md` 增补行 + 常量改动 diff
   - 验收：签字可见可指认；未签字 MUST NOT 改动常量、MUST NOT 进入报告决策；改动仅涉及该代码常量（MUST NOT 新增配置字段）
   - 依赖：4.2；design D-3 / D-1（R2-6）

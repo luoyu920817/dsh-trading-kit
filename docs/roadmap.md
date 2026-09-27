@@ -67,6 +67,17 @@
 （B1 需求 1+3 合并已随路线定型；F1 起源词表建议：`超短` / `价投` / `期货`
 三命名空间 + 首批模式级 id 十余个。）
 
+### 5.0 安全面决策（spike-tdx-embed C 层签字）
+
+- **2026-09-27：owner 签字采纳 C 层（未认证 loopback 只读回退）**——动机：TDX 内嵌
+  浏览器不保证携带宿主 cookie，探针承载验证需要免认证只读入口。**放宽点**：仅本插件
+  探针路由（`/dsh-trader-kit/probe`）、仅 GET 只读、仅救 401（403 跨站栅栏不救援）、
+  服务端仅绑 127.0.0.1；**业务写入通道 MUST NOT 走 C 层**（写接口认证 = A 层 cookie
+  硬门槛，change 4 落地时不受本签字影响）。落地形态：代码常量
+  `UNAUTHENTICATED_READONLY_DEFAULT = true`（`src/routes/probe.ts`，非配置项）。
+  关闭态行为由测试以注入方式持续覆盖；17709 TCP 探测同日裁决为默认开
+  （`diagnostics.tdx17709.enabled` 默认 `true`，data-foundation D-8）。
+
 ## 5. 迭代一重排（2026-09-27）
 
 本迭代**刻意不按 §2 阶段顺序推进**（「迭代一」= 复盘卡片最小闭环 + 数据面先行的

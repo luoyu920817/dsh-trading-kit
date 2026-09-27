@@ -77,8 +77,8 @@ describe('模块常量（tasks 1.1）', () => {
     expect(DIAGNOSTICS_DEFAULT).toBe(true)
   })
 
-  it('UNAUTHENTICATED_READONLY_DEFAULT = false（C 层代码常量，默认关闭，非配置项）', () => {
-    expect(UNAUTHENTICATED_READONLY_DEFAULT).toBe(false)
+  it('UNAUTHENTICATED_READONLY_DEFAULT = true（C 层代码常量；owner 2026-09-27 签字采纳，非配置项）', () => {
+    expect(UNAUTHENTICATED_READONLY_DEFAULT).toBe(true)
   })
 })
 
@@ -128,14 +128,16 @@ describe('路由注册/卸载（集成核对项的插件层结构断言，tasks 
     expect(h.logs.some((line) => line.includes('探针 URL'))).toBe(false)
   })
 
-  it('接线冒烟：注册的 handler 经 ctx.connection.requestRejection 判定（401/200 两态）', () => {
+  it('接线冒烟：注册的 handler 经 ctx.connection.requestRejection 判定（C 层开=未认证 200；栅栏语义不变）', () => {
     const h = createHarness()
     registerProbe(h.ctx)
     const handler = h.routes[0].handler
-    const denied = makeRes()
-    handler(makeReq({ headers: {} }), denied.res)
-    expect(denied.rec.status).toBe(401)
-    expect(denied.rec.body).toBe('')
+    // C 层已签字（生产常量 true）：无凭据请求 → 200 + auth=none（页面渲染）。
+    const anonymous = makeRes()
+    handler(makeReq({ headers: {} }), anonymous.res)
+    expect(anonymous.rec.status).toBe(200)
+    expect(anonymous.rec.body).toContain('dsh-trader-kit-probe-page')
+    // A 层 cookie：200（同一放行面）。
     const allowed = makeRes()
     handler(makeReq({ headers: { cookie: 'dsh-auth=ok' } }), allowed.res)
     expect(allowed.rec.status).toBe(200)

@@ -116,13 +116,12 @@ describe('真实临时 http server + 裸 socket 端到端', () => {
     expect(injectedState(parsed.body).auth).toBe('diagnostic-token')
   })
 
-  it('未认证（无 cookie 无 token）→ 401，正文为空、页面不渲染', async () => {
+  it('未认证（无 cookie 无 token）→ C 层已签字：200 + auth=none + no-store + 页面渲染', async () => {
     const raw = await probeRequest(PROBE_PATH)
     const parsed = parseResponse(raw)
-    expect(parsed.statusLine).toContain(' 401 ')
+    expect(parsed.statusLine).toContain(' 200 ')
     expect(parsed.headers.toLowerCase()).toContain('cache-control: no-store')
-    expect(parsed.body).not.toContain(PROBE_PAGE_MARKER)
-    expect(parsed.body).toBe('')
+    expect(injectedState(parsed.body).auth).toBe('none')
   })
 
   it('方法不匹配：POST → 405 + Allow: GET', async () => {

@@ -40,7 +40,7 @@ describe('A 层（宿主 cookie，首选）', () => {
 
 describe('401/403 拒绝（插件 handler 自产；页面不渲染、不注入）', () => {
   it('无 cookie（rejection=401）→ 401 + no-store，正文为空、无探针页标记', () => {
-    const rec = run(makeDeps({ requestRejection: () => 401 }), makeReq())
+    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false }), makeReq())
     expect(rec.status).toBe(401)
     expect(rec.headers['Cache-Control']).toBe('no-store')
     expect(rec.body).toBe('')
@@ -56,7 +56,7 @@ describe('401/403 拒绝（插件 handler 自产；页面不渲染、不注入�
   })
 
   it('负向事实（spec）：仅带 ?token= 直连（宿主 token 形态）→ 401，不被消费', () => {
-    const deps = makeDeps({ requestRejection: () => 401 })
+    const deps = makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false })
     for (const url of ['/dsh-trader-kit/probe?token=any-host-launch-token', '/dsh-trader-kit/probe?token=', '/dsh-trader-kit/probe?Token=tok-diag-aabbcc', '/dsh-trader-kit/probe']) {
       const rec = run(deps, makeReq({ url }))
       expect(rec.status).toBe(401)
@@ -67,7 +67,7 @@ describe('401/403 拒绝（插件 handler 自产；页面不渲染、不注入�
 
 describe('B 层（插件自有诊断 token）', () => {
   it('token 正确 → 200 + auth=diagnostic-token（与 A 层 cookie 可区分）', () => {
-    const rec = run(makeDeps({ requestRejection: () => 401 }), makeReq({ url: '/dsh-trader-kit/probe?token=tok-diag-aabbcc' }))
+    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false }), makeReq({ url: '/dsh-trader-kit/probe?token=tok-diag-aabbcc' }))
     expect(rec.status).toBe(200)
     expect(rec.headers['Cache-Control']).toBe('no-store')
     const state = injectedState(rec.body)
@@ -76,7 +76,7 @@ describe('B 层（插件自有诊断 token）', () => {
   })
 
   it('token 错误 / 缺失 → 401（rejection 为 401 前提下）', () => {
-    const deps = makeDeps({ requestRejection: () => 401 })
+    const deps = makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false })
     for (const url of ['/dsh-trader-kit/probe?token=wrong', '/dsh-trader-kit/probe', '/dsh-trader-kit/probe?other=1']) {
       expect(run(deps, makeReq({ url })).status).toBe(401)
     }
@@ -89,18 +89,26 @@ describe('B 层（插件自有诊断 token）', () => {
   })
 })
 
-describe('C 层（代码常量开关，默认关闭）', () => {
-  it('生产常量 UNAUTHENTICATED_READONLY_DEFAULT=false：未认证仍 401', () => {
-    expect(UNAUTHENTICATED_READONLY_DEFAULT).toBe(false)
-    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: UNAUTHENTICATED_READONLY_DEFAULT }), makeReq())
+describe('C 层（代码常量开关；owner 2026-09-27 签字采纳后默认 true）', () => {
+  it('关闭态（注入 unauthenticatedReadonly=false）：未认证仍 401（签字前行为的持续覆盖）', () => {
+    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false }), makeReq())
     expect(rec.status).toBe(401)
     expect(rec.body).toBe('')
   })
 
-  it('常量置 true（签字后）的分支接线：401 → 200 + auth=none', () => {
-    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: true }), makeReq())
+  it('生产常量 UNAUTHENTICATED_READONLY_DEFAULT=true（签字沿革见常量注释）：401 → 200 + auth=none', () => {
+    expect(UNAUTHENTICATED_READONLY_DEFAULT).toBe(true)
+    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: UNAUTHENTICATED_READONLY_DEFAULT }), makeReq())
     expect(rec.status).toBe(200)
     expect(injectedState(rec.body).auth).toBe('none')
+  })
+
+  it('放宽点·仅 GET：C 层放行后非 GET 仍 405 + Allow: GET', () => {
+    for (const method of ['POST', 'DELETE']) {
+      const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: true }), makeReq({ method }))
+      expect(rec.status).toBe(405)
+      expect(rec.headers['Allow']).toBe('GET')
+    }
   })
 })
 
@@ -116,7 +124,7 @@ describe('方法不匹配', () => {
   })
 
   it('先认证后方法：无 cookie 的 POST → 401（不向无凭据方暴露方法语义）', () => {
-    const rec = run(makeDeps({ requestRejection: () => 401 }), makeReq({ method: 'POST' }))
+    const rec = run(makeDeps({ requestRejection: () => 401, unauthenticatedReadonly: false }), makeReq({ method: 'POST' }))
     expect(rec.status).toBe(401)
   })
 })
