@@ -12,6 +12,7 @@
  * - review           → change 4 review-page / change 5 daily-summary（src/review/index.ts）
  */
 import type { Context } from './context-types.ts'
+import { resolveTraderKitConfig, type TraderKitConfig } from './config.ts'
 import { registerProbe } from './routes/probe.ts'
 import { registerData } from './service/index.ts'
 import { registerSkillInstaller } from './skill/index.ts'
@@ -20,12 +21,16 @@ import { registerReview } from './review/index.ts'
 /** Cordis 插件名（= cordis.patch.yml 挂载的 npm 包名）。 */
 export const name = 'dsh-trader-kit'
 
-/** 配置占位：change 2（data-foundation）首次落地 `src/config.ts` 的 `Config` 并处置本类型（不留两份配置类型）。 */
-export interface TraderKitConfig {}
+/**
+ * 依赖注入声明（沿 better-sidebar 先例）：探针线需要 webServer/connection，
+ * 数据线与 skill 安装线需要 tools。新增服务依赖只改这一行。
+ */
+export const inject = ['webServer', 'connection', 'tools']
 
-export function apply(ctx: Context, _config?: TraderKitConfig): void {
+export function apply(ctx: Context, config?: TraderKitConfig): void {
+  const resolved = resolveTraderKitConfig(config)
   registerProbe(ctx)
-  registerData(ctx)
+  registerData(ctx, resolved)
   registerSkillInstaller(ctx)
   registerReview(ctx)
 }

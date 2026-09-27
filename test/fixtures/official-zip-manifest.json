@@ -1,0 +1,53 @@
+{
+  "$comment": "tasks 1.3 产物：官方 zip 源实测证据（2026-09-27 实抓，有网环境执行）。F8/F9 待验证项的实测结论见 measured 字段。snapshot 文件为当日官方包原样快照，仅作测试 fixture；官方源会随 TDX 更新，重抓时须同步回填本清单（哈希/ETag/Last-Modified 与快照逐一对照）。",
+  "fetchedAt": "2026-09-27T11:37:40Z",
+  "url": "https://www.tdx.com.cn/products/autoup/skills/tdx-tq-local.zip",
+  "response": {
+    "httpStatus": 200,
+    "headers": {
+      "server": "nginx",
+      "content-type": "application/zip",
+      "content-length": "30337",
+      "last-modified": "Sun, 20 Sep 2026 11:49:07 GMT",
+      "etag": "\"6aafc833-7681\"",
+      "accept-ranges": "bytes"
+    }
+  },
+  "archive": {
+    "sha256": "09f4c39c4641c14f6c283ca402ea53a351ee4e97a4f3593d159ba13ee16ee0a6",
+    "bytes": 30337,
+    "snapshotFile": "official/tdx-tq-local-snapshot.zip"
+  },
+  "entries": [
+    {
+      "name": "SKILL.md",
+      "method": 8,
+      "flags": 0,
+      "crc32": "89bc2ff9",
+      "compressedSize": 30187,
+      "uncompressedSize": 215314,
+      "externalAttrs": "0x20",
+      "symlink": false,
+      "sha256": "6d5fc828d427dc5e3e5996dcdb951bab44ac6a077736fa2a7b88bbec5140aa59"
+    }
+  ],
+  "skillMd": {
+    "relativePath": "SKILL.md",
+    "bytes": 215314,
+    "frontmatter": {
+      "name": "通达信TQ-Local",
+      "version": "1.2.0（2026-09-20）",
+      "versionParsed": "1.2.0"
+    },
+    "nameMatchNote": "官方包 frontmatter name 为展示标题「通达信TQ-Local」，不等于目录名 tdx-tq-local，也不匹配宿主 isSkillName 的 kebab-case 形态（F5 旁证与官方包现实冲突，按 design 未能核验项处理）。安装器对「name 存在但与目标名不一致」记显式警告而非硬失败，否则官方默认源永远无法通过校验（登记偏离，见任务汇报）。"
+  },
+  "measured": {
+    "layout": "包根单条目 SKILL.md（无子目录包裹）；校验按「SKILL.md 条目唯一或取路径最短者」仍适用",
+    "etag": "支持（nginx 静态文件 ETag 形态 \"<inode>-<size>\"），条件请求 If-None-Match 可用",
+    "lastModifiedForm": "合法 HTTP-date（Sun, 20 Sep 2026 11:49:07 GMT）——design 立稿记录的「2026-09-20」为日期摘录，非响应头原样形态；原样存储策略不变",
+    "redirect": "本次实测未见 30x（直连 200）；redirect: 'manual' + 异 host 显式报错的护栏保持不变",
+    "publicHashOrSignature": "响应头无内容哈希/签名（F9 维持：无公开哈希，仅 ETag/Last-Modified 为源标识）",
+    "contentLength": 30337,
+    "uncompressedSkillMdBytes": 215314
+  }
+}

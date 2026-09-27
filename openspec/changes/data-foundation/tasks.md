@@ -1,49 +1,50 @@
 ## 1. 配置面、依赖与装配
 
-- [ ] 1.1 `src/config.ts`：导出 `Config`（schemastery，沿 `DSH-better-sidebar/src/config.ts` 先例）——字段 `dataRoot: z.string().default('')`、`sources`（S7 `sign`/`ts`、S5、S8 的超时与重试）、`guard`（`maxConcurrency`/`minIntervalMs`/`maxBatch`/`dailyBudget`/`fullMarketGuard`/`sessionOverride: 'auto'|'on'|'off'`）、`diagnostics`（`probe.enabled` 默认 `true`、`probe.targets` 默认全选、`tdx17709.enabled` **默认 `true`**——**owner 裁决 2026-09-27**：默认开启 17709 TCP 探测，覆盖评审 Issue 26③/29 的「默认 `false`」；显式置 `false` 才关闭；沿革见 `design.md` D-8 与 Open Questions 第 1 条）；处置既有 `src/index.ts` 的 `export interface TraderKitConfig`（迁移为从 `Config` 推导的类型或删除，MUST NOT 留两份配置类型）
+- [x] 1.1 `src/config.ts`：导出 `Config`（schemastery，沿 `DSH-better-sidebar/src/config.ts` 先例）——字段 `dataRoot: z.string().default('')`、`sources`（S7 `sign`/`ts`、S5、S8 的超时与重试）、`guard`（`maxConcurrency`/`minIntervalMs`/`maxBatch`/`dailyBudget`/`fullMarketGuard`/`sessionOverride: 'auto'|'on'|'off'`）、`diagnostics`（`probe.enabled` 默认 `true`、`probe.targets` 默认全选、`tdx17709.enabled` **默认 `true`**——**owner 裁决 2026-09-27**：默认开启 17709 TCP 探测，覆盖评审 Issue 26③/29 的「默认 `false`」；显式置 `false` 才关闭；沿革见 `design.md` D-8 与 Open Questions 第 1 条）；处置既有 `src/index.ts` 的 `export interface TraderKitConfig`（迁移为从 `Config` 推导的类型或删除，MUST NOT 留两份配置类型）
   - 产物：`src/config.ts`、`src/index.ts`（差异）
   - 验收：`pnpm typecheck` 通过；`export const Config` 存在且 `dataRoot` 默认值为空串；用例 `Config 默认值填充` / `非法值拒绝` 通过；**`tdx17709.enabled` 默认值断言为 `true`（owner 裁决 2026-09-27：默认开，覆盖评审 Issue 26③/29 的 `false`）**
   - 依赖：无
-- [ ] 1.2 `package.json`：新增依赖 `schemastery`（dependencies，先例 ^3.18.0）、`@deepseek-ai/dsh-tools`（`defineTool` 来源；沿先例放 peerDependencies + devDependencies）；`cordis.patch.yml` 增加 `config` 段，**只写占位符/注释示例**（MUST NOT 写个人 vault 绝对路径，MUST NOT 写 `sign`/`ts` 现值；本机实例路径与本机签章走 profile 层或注释示例）
+- [x] 1.2 `package.json`：新增依赖 `schemastery`（dependencies，先例 ^3.18.0）、`@deepseek-ai/dsh-tools`（`defineTool` 来源；沿先例放 peerDependencies + devDependencies）；`cordis.patch.yml` 增加 `config` 段，**只写占位符/注释示例**（MUST NOT 写个人 vault 绝对路径，MUST NOT 写 `sign`/`ts` 现值；本机实例路径与本机签章走 profile 层或注释示例）
   - 产物：`package.json`、`cordis.patch.yml`
   - 验收：`pnpm install` 后 `pnpm typecheck` 通过；`cordis.patch.yml` 内无盘符/绝对路径、无实际 `sign`/`ts` 值（证据：`grep -nE "[A-Za-z]:\\\\|sign|ts" cordis.patch.yml` 输出仅命中注释/占位符行）
   - 依赖：1.1
-- [ ] 1.3 `apply(ctx)` 接入 `tools` 依赖；`ctx.provide('traderKit', api)` 服务骨架 + `declare module '@deepseek-ai/cordis'` 类型增强；同步 `dsh.plugin.json#contributes.tools` 为 T0/T1/T2 三项（工具名与注册项一致；若判定该字段属市场渠道约定，则在 README 注明不改的理由）
+- [x] 1.3 `apply(ctx)` 接入 `tools` 依赖；`ctx.provide('traderKit', api)` 服务骨架 + `declare module '@deepseek-ai/cordis'` 类型增强；同步 `dsh.plugin.json#contributes.tools` 为 T0/T1/T2 三项（工具名与注册项一致；若判定该字段属市场渠道约定，则在 README 注明不改的理由）
   - 产物：`src/index.ts`、`src/service/index.ts`、`dsh.plugin.json`
   - 验收：`pnpm typecheck` 通过；挂载实测后 `traderKit` service 可见（`health.status()` 可调用）；`dsh.plugin.json#contributes.tools` 与注册的三项工具名逐一一致（或 README 有明确不改的说明）（评审 Issue 26②）
   - 依赖：1.1
-- [ ] 1.4 改造 `test/smoke.test.ts`：现有断言 `apply({} as never)` 不抛错在接入 `ctx.tools` 后必然失败——改为最小 fake context（`tools.register` / `provide` 记录调用，零 mock 库、用真实对象），断言「注册了 3 个工具 + 提供 `traderKit` service」；保留「插件名与 patch 行一致」断言
+- [x] 1.4 改造 `test/smoke.test.ts`：现有断言 `apply({} as never)` 不抛错在接入 `ctx.tools` 后必然失败——改为最小 fake context（`tools.register` / `provide` 记录调用，零 mock 库、用真实对象），断言「注册了 3 个工具 + 提供 `traderKit` service」；保留「插件名与 patch 行一致」断言
   - 产物：`test/smoke.test.ts`
   - 验收：`pnpm test` 中 `dsh-trader-kit 装配面` 用例通过；断言 `registeredTools.length === 3`
   - 依赖：1.3
-- [ ] 1.5 单测（零 mock，真实临时目录 + 真实本地 http 桩）：`dataRoot` 空值 → 挂载成功且写入报错；非法 guard 值被 schema 拒绝；`diagnostics.tdx17709.enabled=false` → 探测项状态为「未探测」
+- [x] 1.5 单测（零 mock，真实临时目录 + 真实本地 http 桩）：`dataRoot` 空值 → 挂载成功且写入报错；非法 guard 值被 schema 拒绝；`diagnostics.tdx17709.enabled=false` → 探测项状态为「未探测」
   - 产物：`test/config.test.ts`
   - 验收：用例名 `未配置 dataRoot → 挂载成功且写入报错`、`非法 guard 值被拒绝`、`关闭 17709 探测记为未探测` 全绿；另断言**默认配置下 17709 项参与探测**（enabled 默认 `true`，owner 裁决 2026-09-27；显式置 `false` 才记「未探测」，与 1.1 的默认值一致）
   - 依赖：1.1、1.3
 
 ## 2. 数据目录范式
 
-- [ ] 2.1 `src/paths/mapping.ts`：两级业务区映射表（**区域目录 + 文件名模板**），覆盖 `review`（唯一新增）/ 缓存区 / `agent/skills` / 预留三区（宏观 = `题材调研/00宏观/`，返回既有路径且仅登记、未登记的写入用业务区才报错）；文件名模板归属本模块（`data-root-layout` 为唯一事实源）
+- [x] 2.1 `src/paths/mapping.ts`：两级业务区映射表（**区域目录 + 文件名模板**），覆盖 `review`（唯一新增）/ 缓存区 / `agent/skills` / 预留三区（宏观 = `题材调研/00宏观/`，返回既有路径且仅登记、未登记的写入用业务区才报错）；文件名模板归属本模块（`data-root-layout` 为唯一事实源）
   - 产物：`src/paths/mapping.ts`
   - 验收：用例 `业务区表穷举` 断言 6 个 key 的目录解析结果，且宏观区解析返回 `题材调研/00宏观/`（非裸根）；用例 `未登记写入用业务区报错` 断言显式错误（评审 Issue 26①）
   - 依赖：1.1
-- [ ] 2.2 `src/paths/sanitize.ts`：`sanitizeNameSegment(name)`（NFC；`[\\/:*?"<>|\x00-\x1f]`→`_`；去首尾空格与点号；Windows 保留名加 `_`；40 字符截断并记 `nameTruncated`；空 → 用代码段）
+- [x] 2.2 `src/paths/sanitize.ts`：`sanitizeNameSegment(name)`（NFC；`[\\/:*?"<>|\x00-\x1f]`→`_`；去首尾空格与点号；Windows 保留名加 `_`；40 字符截断并记 `nameTruncated`；空 → 用代码段）
   - 产物：`src/paths/sanitize.ts`
   - 验收：用例 `注入用例被净化`（`../../etc`、`a/b`、`CON`、空名 四组）断言输出不含 `/`、`\`、`..` 且结果非空；`名称超长与保留名` 断言长度 ≤40 与 `CON_`
+  - **登记（实施期口径解释，2026-09-27）**：spec 场景为可执行验收口径——`'../../etc'` 的名称段渲染为 `'.._.._etc'`（前导点号在分隔符替换后保留）；故「去首尾点号」落地为：**首部只去空格、尾部去空格与点号**（Windows 文件名不得以点号/空格结尾，尾部为硬约束），已写进 `sanitize.ts` 头注释。返回形状登记为 `{ value, nameTruncated }`（供调用方把 `nameTruncated` 透传进写入响应 `warnings`，即 review-page 1.7 的跨 change 回写项）
   - 依赖：无
-- [ ] 2.3 `resolveArea(key, params)`：参数化路径解析 + 越界防护（拒绝 `..` 与绝对路径，**含由外部数据拼出的路径段**）+ 参数白名单（`code: ^\d{6}$`、`date: ^\d{8}$`、`name` 经 2.2）+ 未定义业务区显式报错；日期参数**只接受紧凑 `YYYYMMDD`**，折算由调用方经 `src/data/date.ts` 的 `toCompactDate` 完成（本模块 MUST NOT 自行 `replace`/`slice` 日期串，`iteration-1-contracts §1`）
+- [x] 2.3 `resolveArea(key, params)`：参数化路径解析 + 越界防护（拒绝 `..` 与绝对路径，**含由外部数据拼出的路径段**）+ 参数白名单（`code: ^\d{6}$`、`date: ^\d{8}$`、`name` 经 2.2）+ 未定义业务区显式报错；日期参数**只接受紧凑 `YYYYMMDD`**，折算由调用方经 `src/data/date.ts` 的 `toCompactDate` 完成（本模块 MUST NOT 自行 `replace`/`slice` 日期串，`iteration-1-contracts §1`）
   - 产物：`src/paths/resolve.ts`
   - 验收：用例 `参数白名单拒绝`（5 位 code、canonical `2026-09-24` 直传 → 显式报错并提示经 `toCompactDate`）、`路径越界拒绝`、`未定义业务区报错` 全绿；恶意 name 渲染结果仍落在业务区前缀内（断言 `resolved.startsWith(areaDir)`）
   - 依赖：2.1、2.2、4.5
-- [ ] 2.4 `ensureDir()`：递归创建（含父级）、既有目录零改动、失败显式报错（路径 + 原因）
+- [x] 2.4 `ensureDir()`：递归创建（含父级）、既有目录零改动、失败显式报错（路径 + 原因）
   - 产物：`src/paths/fs.ts`
   - 验收：用例 `缺失目录首次写入`（真实临时目录建 `DB/review/202609/`）、`既有目录不被改动`（预置文件后断言 mtime 与内容不变）全绿
   - 依赖：2.3
-- [ ] 2.5 迁移提示（R4 覆盖缺口）：实现「检测到历史数据不在当前 `dataRoot` 时给出非阻断健康提示」的检测函数与状态字段（本 change 只登记 + 单测；首次写盘由 change 4 触发）
+- [x] 2.5 迁移提示（R4 覆盖缺口）：实现「检测到历史数据不在当前 `dataRoot` 时给出非阻断健康提示」的检测函数与状态字段（本 change 只登记 + 单测；首次写盘由 change 4 触发）
   - 产物：`src/paths/migrate-notice.ts`
   - 验收：用例 `数据根变更后给出非阻断提示` —— 以 A 为根预置文件、改配置为 B 后调用检测 → `notice` 非空且 `blocking === false`
   - 依赖：2.3、1.1
-- [ ] 2.6 单测汇总（零 mock，真实临时目录）：路径解析正确性、越界拒绝、缺失目录创建、既有目录内容零改动、净化不改变既有文件名
+- [x] 2.6 单测汇总（零 mock，真实临时目录）：路径解析正确性、越界拒绝、缺失目录创建、既有目录内容零改动、净化不改变既有文件名
   - 产物：`test/paths.test.ts`
   - 验收：`pnpm test test/paths.test.ts` 全绿；用例 `净化不改变既有文件名` 覆盖同一 `(code,date,name)` 两次解析同名
   - 依赖：2.1–2.5
@@ -101,7 +102,7 @@
   - 产物：验收记录（design/vault 现场节追加一行，含命令与输出摘要）
   - 验收：记录格式 `日期 | 入参 | 返回三元组 | 结论（是否与源一致）`，历史日 `isTradingDay` 必须为 `null`
   - 依赖：4.2
-- [ ] 4.5 **新增** `src/data/date.ts`：日期格式的**单点实现**（`iteration-1-contracts §1`）——导出 `toCompactDate(iso): 'YYYYMMDD'`、`fromCompactDate(compact): 'YYYY-MM-DD'`、`isValidIsoDate(v): boolean`、`rateLimitDate(now?): 'YYYY-MM-DD'`（系统时钟固定 `Asia/Shanghai`）；两格式解析必须显式校验（非法输入显式抛错/返回 `null`），MUST NOT 猜测、MUST NOT 用 `Date` 的本地时区做隐式转换；模块头注释回指 `docs/carryover.md` 台账（本模块为自建，无脚本来源）
+- [x] 4.5 **新增** `src/data/date.ts`：日期格式的**单点实现**（`iteration-1-contracts §1`）——导出 `toCompactDate(iso): 'YYYYMMDD'`、`fromCompactDate(compact): 'YYYY-MM-DD'`、`isValidIsoDate(v): boolean`、`rateLimitDate(now?): 'YYYY-MM-DD'`（系统时钟固定 `Asia/Shanghai`）；两格式解析必须显式校验（非法输入显式抛错/返回 `null`），MUST NOT 猜测、MUST NOT 用 `Date` 的本地时区做隐式转换；模块头注释回指 `docs/carryover.md` 台账（本模块为自建，无脚本来源）
   - 产物：`src/data/date.ts`
   - 验收：用例 `YYYY-MM-DD ⇄ YYYYMMDD 双向转换`（含闰年 `20240229`）、`非法日期被拒`（`'2026-13-01'`、`'2026/09/24'`、`'202609'`）、`限流日按 Asia/Shanghai 计算`（跨 UTC 零点用例）、**`格式唯一性：src/data/** 内除 date.ts 外无自定义日期截断/拼接`**（结构断言：扫描 `src/data/**` 与 `src/index.ts`，先断言 `targets.length > 0`，命中 `slice(0,10)`/`replace(/-/g`/`substring` 等自定义实现即失败）全绿
   - 依赖：无（纯函数，先于 2.3/3.3/4.1 落地；`src/data/date.ts` 是全仓日期格式的唯一实现）
