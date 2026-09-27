@@ -16,63 +16,77 @@
 
 ## 1. 卡片存储（`review-card-store`，承载无关层）
 
-- [ ] 1.1 `src/review/md/frontmatter.ts`：frontmatter 读写（含最小键 schema 校验、未知键原样保留、`patterns`/`drafts` 预留键保留、`subjective: true`、**值级最小文本修补**），MUST NOT 整体重序列化
+- [x] 1.1 `src/review/md/frontmatter.ts`：frontmatter 读写（含最小键 schema 校验、未知键原样保留、`patterns`/`drafts` 预留键保留、`subjective: true`、**值级最小文本修补**），MUST NOT 整体重序列化
   - 产物：`src/review/md/frontmatter.ts`
   - 验收：读写往返后键序/引号/缩进/未知键逐字节不变；`patterns`/`drafts` 既有值保留；键 schema 见 spec「frontmatter 最小键 schema」
   - 依赖：`§4`（EOL/BOM/最小修补）、spec `review-card-store`「frontmatter 最小键 schema」
-- [ ] 1.2 `src/review/md/parse.ts`：按锚点解析卡片分节（`^card-`）与排除附注（`^ainote-`），**逐行扫描只认 H2 标题行**、**跳过 fenced code block**、提取 `HH:mm` / `writtenAt` / `clientRequestId` / 正文
+- [x] 1.2 `src/review/md/parse.ts`：按锚点解析卡片分节（`^card-`）与排除附注（`^ainote-`），**逐行扫描只认 H2 标题行**、**跳过 fenced code block**、提取 `HH:mm` / `writtenAt` / `clientRequestId` / 正文
   - 产物：`src/review/md/parse.ts`
   - 验收：代码块内锚点不入卡片；正文含行首 `##` 时归入所属卡片正文；返回 `eol` / `bom` 探测结果
   - 依赖：`§2`、spec「解析与幂等规则」
-- [ ] 1.3 `src/review/anchor.ts`：`normalizeCode(raw)`（去 `sh|sz|bj` 前缀与 `.sh|.sz|.bj` 后缀；余下须 6 位数字；保留前导零、不补全、不猜测）+ **锚点正则唯一版本**（带 `(-<seq>)?`，写入/解析/幂等共用同一常量）
+- [x] 1.3 `src/review/anchor.ts`：`normalizeCode(raw)`（去 `sh|sz|bj` 前缀与 `.sh|.sz|.bj` 后缀；余下须 6 位数字；保留前导零、不补全、不猜测）+ **锚点正则唯一版本**（带 `(-<seq>)?`，写入/解析/幂等共用同一常量）
   - 产物：`src/review/anchor.ts`（导出 `normalizeCode`、`CARD_ANCHOR_RE`、`AINOTE_ANCHOR_RE`）
   - 验收：`SH600000`/`600000.SH`/`sh600000` → `600000`；`60000`/`6000000`/`abc` → `null` 且不补全；全仓无第二份锚点正则（结构断言）
   - 依赖：`§2`；change 5 复用该模块
-- [ ] 1.4 `src/review/store.ts`：文档定位（经 change 2 `data-root-layout` 的 `resolveArea`，禁止自行拼接）+ **插入到首个 `^ainote-` 分节之前（卡片区尾部）** + 进程内按绝对路径互斥（`Map<absPath, Promise>`）+ 写前 `stat`（`mtimeMs`+`size`）校验 + 重试 3 次 50/200/800 ms + 单次写入总超时 5 s + 不可解时 `CONCURRENT_WRITE` + 原子写（临时文件 + 改名）+ 失败清理 + `clientRequestId` 去重（`status: 'duplicate'` 返回既有锚点）
+- [x] 1.4 `src/review/store.ts`：文档定位（经 change 2 `data-root-layout` 的 `resolveArea`，禁止自行拼接）+ **插入到首个 `^ainote-` 分节之前（卡片区尾部）** + 进程内按绝对路径互斥（`Map<absPath, Promise>`）+ 写前 `stat`（`mtimeMs`+`size`）校验 + 重试 3 次 50/200/800 ms + 单次写入总超时 5 s + 不可解时 `CONCURRENT_WRITE` + 原子写（临时文件 + 改名）+ 失败清理 + `clientRequestId` 去重（`status: 'duplicate'` 返回既有锚点）
   - 产物：`src/review/store.ts`（`locateDoc`/`parseDoc`/`appendCard`/`appendAinote`/`scanDailyCardTargets`，签名与 spec「可复用写入接口契约」逐字一致）
   - 验收：插入位置正确（附注仍在末尾）；既有字节不变（口径见 `§4`）；重试成功且不留半截文档；重复 `clientRequestId` 不追加第二张卡
   - 依赖：`§3`/`§4`/`§5`、1.1 / 1.2 / 1.3、change 2 `data-root-layout`
-- [ ] 1.5 `src/review/context.ts`：`NameResolver`（层① 本地历史 frontmatter → 层② T2/S8 网络反查 → 层③ 仅代码，层序与归属接口见 `§12.4`）与 `TradeDateResolver`（seam，见 3.1）两个接口 + 默认实现；返回值含 `source` / `confidence` / 可选 `marketSuffix`；`NameResolver` MUST NOT 让本地层出网
+- [x] 1.5 `src/review/context.ts`（**跨线登记（2026-09-27）**：未来 2.5/6.3② 的「test/** 零 `fetch(`」断言须沿用探针线的具名豁免——`test/helpers/data-stub.ts`（change 2 本地桩通道，运行时回环断言）与 `test/structure.test.ts`（扫描器自体）；见 `test/probe/probe-registration.test.ts` 边界扫描）：`NameResolver`（层① 本地历史 frontmatter → 层② T2/S8 网络反查 → 层③ 仅代码，层序与归属接口见 `§12.4`）与 `TradeDateResolver`（seam，见 3.1）两个接口 + 默认实现；返回值含 `source` / `confidence` / 可选 `marketSuffix`；`NameResolver` MUST NOT 让本地层出网
   - 产物：`src/review/context.ts`
   - 验收：三层可注入桩逐级验证（层①/③ 无出站网络、层② 只在 enrich 路径）；seam 返回形状满足 D-TQ 选项 B（契约测试）
   - 依赖：`§1`/`§12.4`、change 2 `traderKit.data.resolveTradeDate`、3.1
-- [ ] 1.6 单测（零 mock，真实临时目录）：首次落盘/同日插入/跨日新文档、既有字节不变、插入位置（附注之前）、frontmatter 预留键与未知键保留、同分钟锚点唯一、名称变化不产生第二份文档、原子写中断不留半截、文件占用失败后重试成功、幽灵锚点、重复锚点、代码块内锚点、**文件名净化（`*ST` / `/` / `:` / 控制字符 / 保留名 / 超长 / 净化后为空 / NFC-北交所）**
+- [x] 1.6 单测（零 mock，真实临时目录）：首次落盘/同日插入/跨日新文档、既有字节不变、插入位置（附注之前）、frontmatter 预留键与未知键保留、同分钟锚点唯一、名称变化不产生第二份文档、原子写中断不留半截、文件占用失败后重试成功、幽灵锚点、重复锚点、代码块内锚点、**文件名净化（`*ST` / `/` / `:` / 控制字符 / 保留名 / 超长 / 净化后为空 / NFC-北交所）**
   - 产物：`src/review/**/*.test.ts`（或仓内既有测试目录下的对应用例文件）
   - 验收：`pnpm test` 全绿；每类断言独立可失败（不做「大而全」单测）
   - 依赖：1.1–1.5
-- [ ] 1.7 文件名净化接入（**不新建模块**）：文件名名称段 MUST 经 change 2 的 `resolveArea(key, params)` / `sanitizeNameSegment`（唯一实现 `src/paths/sanitize.ts`，`§6`/`§11`）净化；本 change MUST NOT 另建 `src/review/sanitize.ts` 或第二份「替换非法字符/截断/保留名」实现；`nameTruncated` 只透传到写入响应 `warnings`
+- [x] 1.7 文件名净化接入（**不新建模块**）：文件名名称段 MUST 经 change 2 的 `resolveArea(key, params)` / `sanitizeNameSegment`（唯一实现 `src/paths/sanitize.ts`，`§6`/`§11`）净化；本 change MUST NOT 另建 `src/review/sanitize.ts` 或第二份「替换非法字符/截断/保留名」实现；`nameTruncated` 只透传到写入响应 `warnings`
   - 产物：store 写入路径的净化接入代码（import change 2 实现或经 `resolveArea`），**无本 change 自有净化模块**；另加 frontmatter 值双引号转义逻辑（落 1.1）
   - 验收：结构断言「全仓不存在 `src/review/sanitize.ts`、净化实现唯一」（先断言扫描目标非空，`§7`）；单测覆盖 spec「文件名与 frontmatter 值净化」全部场景（`*ST` / `/`·`\`·`:` / 控制字符 / 保留名 / 超长→`nameTruncated` / 净化后为空 / NFC-北交所）
   - 依赖：`§6`/`§11`、change 2 `data-root-layout`（`resolveArea` 与 `sanitizeNameSegment`）、1.4
   - 跨 change 回写项（登记，本 change 不自行实现）：change 2 `data-root-layout` spec 的「截断并记 `nameTruncated`」MUST 补明该标志的**返回形状**（返回值/结果字段），否则本 change 的写入响应 `warnings` 无法承载该项；未暴露期间 `warnings` 不含 `nameTruncated`，MUST NOT 在本 change 重算净化规则（Open Questions 9）
-- [ ] 1.8 并发单测：页面写入与附注写入并发**两条均保留**；写前 `stat` 不一致 → 重读重试；重试 3 次仍冲突 → `CONCURRENT_WRITE`（含路径）；并发后文档同时含新卡片与附注且附注在末尾
+- [x] 1.8 并发单测：页面写入与附注写入并发**两条均保留**；写前 `stat` 不一致 → 重读重试；重试 3 次仍冲突 → `CONCURRENT_WRITE`（含路径）；并发后文档同时含新卡片与附注且附注在末尾
   - 产物：并发测试用例（`appendCard` × `appendAinote` 并发 + 外部改动模拟）
   - 验收：断言最终文档同时含两部分内容，且既有字节不变；错误路径返回显式 `CONCURRENT_WRITE`
   - 依赖：1.4、`§5`；与 change 5「共享同一锁/重试纪律」对接
-- [ ] 1.9 字节口径 fixture 断言：**CRLF / BOM / 无尾换行**三类 fixture + 「原文件字节是结果文件前缀」断言 + frontmatter 最小修补断言（键序不变）
+- [x] 1.9 字节口径 fixture 断言：**CRLF / BOM / 无尾换行**三类 fixture + 「原文件字节是结果文件前缀」断言 + frontmatter 最小修补断言（键序不变）
   - 产物：`fixtures/`（或测试内联构造）三类样本 + 断言用例
   - 验收：CRLF 不混排；BOM 保留且唯一；无尾换行先补本文件 EOL（该分隔符不计入既有内容）
   - 依赖：1.1 / 1.4、`§4`
-- [ ] 1.10 多命中确定性单测：构造两份同日同代码文档 → 取 mtime 最新；mtime 平局 → 按文件名字典序；`warnings` 含两条路径；未被选中文档字节不变
+- [x] 1.10 多命中确定性单测：构造两份同日同代码文档 → 取 mtime 最新；mtime 平局 → 按文件名字典序；`warnings` 含两条路径；未被选中文档字节不变
   - 产物：多命中共用测试用例
   - 验收：选择结果稳定可复现；`locateDoc` 返回的 `warnings` 非空
   - 依赖：1.4、`§3`
-- [ ] 1.11 frontmatter schema 单测：未知键原样保留、`patterns` 为模式 id 字符串数组、`drafts` 保留原样、`name` 为空写空字符串、含 `"`/换行的值可被重新解析
+- [x] 1.11 frontmatter schema 单测：未知键原样保留、`patterns` 为模式 id 字符串数组、`drafts` 保留原样、`name` 为空写空字符串、含 `"`/换行的值可被重新解析
   - 产物：frontmatter schema 测试用例
   - 验收：断言未知键与键序逐字节保留；YAML 可解析
   - 依赖：1.1、`§4`
-- [ ] 1.12 导出可复用写入接口契约：`src/review/store.ts` 按 spec「可复用写入接口契约」导出 5 个函数（签名与 `§3` 逐字一致，**五个导出一律返回 `warnings: string[]`**）；`appendCard`/`appendAinote` 落**写前归属硬校验**（不一致抛 `DOC_MISMATCH`，含两侧 code/tradeDate）；service key 注册 `traderKit.review.{locateDoc,parseDoc,appendCard,appendAinote,scanDailyCardTargets}`；工具出口（change 5）指向同一实现
+- [x] 1.12 导出可复用写入接口契约：`src/review/store.ts` 按 spec「可复用写入接口契约」导出 5 个函数（签名与 `§3` 逐字一致，**五个导出一律返回 `warnings: string[]`**）；`appendCard`/`appendAinote` 落**写前归属硬校验**（不一致抛 `DOC_MISMATCH`，含两侧 code/tradeDate）；service key 注册 `traderKit.review.{locateDoc,parseDoc,appendCard,appendAinote,scanDailyCardTargets}`；工具出口（change 5）指向同一实现
   - 产物：`src/review/store.ts` 导出面 + service 注册代码（`src/index.ts` 或等价入口）
   - 验收：结构断言「全仓仅一处原子写/追加实现」；契约测试直接按签名调用 5 个函数并断言每个返回值都含 `warnings` 字段（空告警时为 `[]`）；`DOC_MISMATCH` 用例断言文档字节不变
   - 依赖：1.4、`§3`；供 change 5 复用
-- [ ] 1.13 `src/review/format.ts`（**新增，时间格式化单点**）：导出 `formatZonedIso(date: Date): string`（`YYYY-MM-DDTHH:mm:ss+08:00`）与 `formatAnchorTime(date: Date): string`（`HHmm`）；卡片 `writtenAt`、锚点时间段与分节标题时间全部经本模块
+- [x] 1.13 `src/review/format.ts`（**新增，时间格式化单点**）：导出 `formatZonedIso(date: Date): string`（`YYYY-MM-DDTHH:mm:ss+08:00`）与 `formatAnchorTime(date: Date): string`（`HHmm`）；卡片 `writtenAt`、锚点时间段与分节标题时间全部经本模块
   - 产物：`src/review/format.ts`
   - 验收：`writtenAt` 与（change 5 的）`generatedAt` 调用同一导出；锚点 `HHmm` 与标题 `HH:mm` 同源（同一次 `formatAnchorTime`）；结构断言「全仓仅一处 `+08:00` 偏移拼装」；`YYYY-MM-DD ⇄ YYYYMMDD` 不在本模块（走 change 2 `src/data/date.ts`）
   - 依赖：`§3`/`§11`；change 5 复用
-- [ ] 1.14 告警类型与编码：落 `StoreWarning = { kind: 'multiHit'|'ghostAnchor'|'duplicateAnchor'|'nameTruncated'; path; detail; candidates? }` 与**唯一编码函数**（`` `[<kind>] <path> — <detail>` ``，候选追加 `；候选: a, b`）；落 `Card` / `AInote` 最小类型（change 5 的 `cards` 元素 `{anchor,writtenAt,body}` 为其子集）；字段名**一律 `warnings: string[]`**（store 导出 / `/api/local` / 写入响应同名），MUST NOT 出现 `storeWarnings[]`
+- [x] 1.14 告警类型与编码：落 `StoreWarning = { kind: 'multiHit'|'ghostAnchor'|'duplicateAnchor'|'nameTruncated'; path; detail; candidates? }` 与**唯一编码函数**（`` `[<kind>] <path> — <detail>` ``，候选追加 `；候选: a, b`）；落 `Card` / `AInote` 最小类型（change 5 的 `cards` 元素 `{anchor,writtenAt,body}` 为其子集）；字段名**一律 `warnings: string[]`**（store 导出 / `/api/local` / 写入响应同名），MUST NOT 出现 `storeWarnings[]`
   - 产物：`src/review/store.ts`（或同级 `types.ts`）的类型导出 + 编码函数
   - 验收：单测断言 `warnings` 元素匹配 `^\[(multiHit|ghostAnchor|duplicateAnchor|nameTruncated)\] ` 且可解析回 `kind`；**枚举中不存在 `docMismatch`**（写前归属不一致走抛错 `DOC_MISMATCH`，不产生 `warnings`，见 1.12）；无 `kind` 前缀的自由文本告警为零；`Card` 形状与 change 5 契约逐字一致
   - 依赖：1.4、1.12、`§3`/`§12.7`
+
+> **§1 实现登记（2026-09-27，存储组）**：① 单测落 `test/review/**`（1.6「仓内既有
+> 测试目录」选项；vitest include 仅 `test/**`）。② `scanDailyCardTargets` 增可选尾参
+> `dataRoot?`（省略时显式报错；service 出口在 `registerReview` 绑定装配期 dataRoot）——
+> 该导出在 `Loc.dataRoot` 之外仍需数据根来源，单参调用形态与 `§3` 逐字兼容；`src/data/**`
+> 当前未透出 `dataRoot`，接回到位前该出口按 resolveArea 显式报错降级。③ 进程内互斥键 =
+> 月目录 + code + 日期的规范键（与「按绝对路径互斥」等价，且消除「不同名称段并发首次
+> 创建」的竞态）。④ 测试注入点：`retryDelaysMs` + `onPhase`（`before-read` /
+> `before-verify` / `before-write`）经 `setStoreWriteHooksForTest` 注入，生产不调用。
+> ⑤ `+08:00` 唯一拼装的结构断言（1.13）按「src 全树内仅 `src/review/format.ts`
+> （`src/data/**` 为数据线辖区）」落界——数据线 `src/data/normalize.ts` / `guard.ts`
+> 现存各自的 `+08:00` 拼装，跨线收敛后由 6.3⑧ 全仓断言接管。⑥ 全仓 `pnpm test` 现有
+> 1 处非本线报错：并行数据线新增 `test/structure.test.ts`（未跟踪文件）自身含 `fetch(`
+> 字样，被 change 1 probe-registration 边界扫描命中——非本线产物，未处置。
 
 ## 2. 页面路由与接口（`review-page`，**承载绑定层，`blocked_by: change 1`**）
 
