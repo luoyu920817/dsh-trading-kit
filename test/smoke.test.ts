@@ -12,6 +12,12 @@ function createFakeContext() {
   const provided: Record<string, unknown> = {}
   const effects: string[] = []
   return {
+    webServer: { register: () => () => {}, port: 41000, host: '127.0.0.1' },
+    connection: {
+      requestRejection: () => 401 as const,
+      authenticatedUrl: (u: string) => `${u}?token=stub`,
+    },
+    logger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
     tools: { register: (tool: { name: string }) => { registeredTools.push(tool.name); return () => {} } },
     provide: (key: string, api: unknown) => { provided[key] = api },
     effect: (body: () => unknown, effectName: string) => { body(); effects.push(effectName); return () => {} },

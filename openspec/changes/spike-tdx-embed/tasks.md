@@ -15,43 +15,44 @@
 
 ## 1. 探针路由与页面
 
-- [ ] 1.1 `apply(ctx)` 接入 `webServer` / `connection` 依赖（`export const inject`）+ 模块常量 + 三行 URL 打印（**本 change MUST NOT 引入 `export const Config`，MUST NOT 扩写/保留 `TraderKitConfig`，MUST NOT 改 `cordis.patch.yml`**——`iteration-1-contracts §11`，`src/config.ts` 的唯一 owner 是 change 2）
+- [x] 1.1 `apply(ctx)` 接入 `webServer` / `connection` 依赖（`export const inject`）+ 模块常量 + 三行 URL 打印（**本 change MUST NOT 引入 `export const Config`，MUST NOT 扩写/保留 `TraderKitConfig`，MUST NOT 改 `cordis.patch.yml`**——`iteration-1-contracts §11`，`src/config.ts` 的唯一 owner 是 change 2）
   - 产物：`src/index.ts` 的 `inject` 声明；`src/routes/probe.ts` 导出的模块常量 `PROBE_PATH = '/dsh-trader-kit/probe'`、`DIAGNOSTICS_DEFAULT = true`、`UNAUTHENTICATED_READONLY_DEFAULT = false`（供单测与 spec 断言）
   - 验收：`pnpm typecheck` 通过；**`src/**` 内不存在 `export const Config` 与 `TraderKitConfig`**（扫描型用例：`grep` 断言 + 先断言扫描目标非空）且 `cordis.patch.yml` 无 `config` 段；挂载时经 `ctx.logger`/`console` 打印三行 URL（base = `http://127.0.0.1:${ctx.webServer.port}`、登录 URL = `ctx.connection.authenticatedUrl(base + '/')`、探针 URL = `base + PROBE_PATH`）
   - 依赖：`§11`（change 1 不引入 Config）；design D-1「配置面」段（change 2 接管与四项回写见 4.7）
-- [ ] 1.2 注册探针路由 `{ kind: 'exact', path: PROBE_PATH }`，返回 `text/html`；`ctx.effect` 包裹注册并返回 disposer
+  - 偏离登记（勾选时追加，2026-09-27）：验收中「`src/**` 内不存在 `export const Config` 与 `TraderKitConfig`」的全仓扫描，在本仓并行落地的现实下**收窄为 `src/routes/**` 与 `src/client/**`**（探针自有文件内不出现配置面导出与该配置类型名、且不 import `src/config.ts`——源码断言见 `test/probe/probe-registration.test.ts` 边界扫描，扫描目标非空已先断言）。理由：change 2（数据线）与本线**同波次并行落地** `src/config.ts` 的 `Config`，全仓扫描必然命中 change 2 自有文件；配置面唯一 owner 仍是 change 2 的 `src/config.ts`，探针模块不得 import 它。spec 正文未改动；`cordis.patch.yml` 无 `config` 段的断言保留（非注释行扫描）。
+- [x] 1.2 注册探针路由 `{ kind: 'exact', path: PROBE_PATH }`，返回 `text/html`；`ctx.effect` 包裹注册并返回 disposer
   - 产物：`src/routes/probe.ts`（路由注册与 handler 接线）
   - 验收：路由注册/注销为**集成核对**（起真实宿主或用 `ctx.effect` disposer 契约做结构断言，MUST NOT 写成「零 mock 单测」）；`DIAGNOSTICS_DEFAULT === false` 时**不注册探针路由**，插件层断言「不由插件 handler 响应、无残留 handler」；该请求的**实际状态码由宿主 fallback 决定，登记为集成核对项，MUST NOT 断言「非 200」或「401/404 之一」**；`UNAUTHENTICATED_READONLY_DEFAULT === false`（默认）时未认证请求仍 401/403
   - 依赖：1.1；design D-1（`register` 对重复 `(kind, path)` 抛错——MUST NOT 与 change 4 的 `/review*` 冲突）；spec「关闭诊断页」
-- [ ] 1.3 探针页 HTML 常量：离线自包含、**语法上限 = 基线页已证级别（ES2017 + Fetch + Promise）**、无外链；自检输出 URL / hash / query / UA / 内核特性探测 / 加载时间戳；含输入框 + `hashchange` 时间线显示（变化计数 + 时间 + 解析结果）与点击联动测试按钮区（≤6 种写法）
+- [x] 1.3 探针页 HTML 常量：离线自包含、**语法上限 = 基线页已证级别（ES2017 + Fetch + Promise）**、无外链；自检输出 URL / hash / query / UA / 内核特性探测 / 加载时间戳；含输入框 + `hashchange` 时间线显示（变化计数 + 时间 + 解析结果）与点击联动测试按钮区（≤6 种写法）
   - 产物：`src/client/probe/index.html.ts`（导出 `PROBE_HTML` 模板字符串常量，随 `tsdown` 编译进 `lib/**`）
   - 验收：常量含探针页标记、输入框与 hashchange 时间线、联动按钮区（每种写法一个按钮，页面侧记录点击与调用返回值）；单测断言无 `http(s)://` 外链、无基线页未证语法（ES module / 可选链 / 顶层 await）；记录「基线页语法清单 vs 探针页特性探测」供 4.1 报告对照
   - 依赖：design D-2（内联方案，评审 Issue 7/13）、D-6
-- [ ] 1.4 请求时注入 `window.__PROBE__ = { auth, status, port, basePath, injectedAt }`（`auth ∈ {'cookie','diagnostic-token','none'}`，**拒绝态不设枚举取值**）+ `Cache-Control: no-store`
+- [x] 1.4 请求时注入 `window.__PROBE__ = { auth, status, port, basePath, injectedAt }`（`auth ∈ {'cookie','diagnostic-token','none'}`，**拒绝态不设枚举取值**）+ `Cache-Control: no-store`
   - 产物：`src/routes/probe.ts` 的模板注入逻辑（占位符替换 + JSON 序列化 + `<`/`&`/U+2028/U+2029 转义）
   - 验收：注入值转义单测（构造含 `</script>` 的取值不得逃逸）；响应头含 `no-store`；页面标注「由服务端注入，非页面自证」；401/403 路径不注入、不渲染页面
   - 依赖：1.3；设计 D-2（评审 Issue 12、R2-8）
-- [ ] 1.5 认证接入：handler 首行 `const rejection = ctx.connection.requestRejection(req); if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }`
+- [x] 1.5 认证接入：handler 首行 `const rejection = ctx.connection.requestRejection(req); if (rejection !== undefined) { res.statusCode = rejection; res.end(); return }`
   - 产物：`src/routes/probe.ts` 认证判定代码 + 401/403 拒绝路径
   - 验收：单测断言两种拒绝码（无 cookie → 401；栅栏不过 → 403）且探针页不被渲染；**插件路由 MUST 自行调用**（宿主不代鉴权）
   - 依赖：1.2；design D-1/D-3（评审 Issue 9）
-- [ ] 1.6 A 层两步登录与 B 层插件自有诊断 token
+- [x] 1.6 A 层两步登录与 B 层插件自有诊断 token
   - 产物：登录 URL 打印（1.1）+ 挂载时 `crypto.randomBytes` 生成诊断 token（仅内存 + 日志）+ 路由层常数时间比对（`?token=` 不匹配 → 401）
   - 验收：报告与 README/注释写明 B 层四项边界（来源 = 插件生成、有效期 = 进程生命周期、作用域 = 仅 `<basePath>/probe`、URL 明文风险）；**业务写入 MUST NOT 依赖 B 层**（写接口认证机制由 4.2 的必输出项「写接口认证结论」定义）；单测断言 token 缺失/错误 → 401、正确 → 200 且注入 `window.__PROBE__.auth === 'diagnostic-token'`（与 A 层 `'cookie'` 可区分）
   - 依赖：1.5；design D-3（评审 Issue 1/2、R2-8；**MUST NOT 校验宿主 `launchToken`——无此 API**）
-- [ ] 1.7 C 层未认证只读开关（**代码常量，非配置项**：`UNAUTHENTICATED_READONLY_DEFAULT = false`，默认关闭；置 `true` 前 MUST 取得 owner 签字）
+- [x] 1.7 C 层未认证只读开关（**代码常量，非配置项**：`UNAUTHENTICATED_READONLY_DEFAULT = false`，默认关闭；置 `true` 前 MUST 取得 owner 签字）
   - 产物：C 层开关常量 + 放宽点定义（`Origin: null` / `Sec-Fetch-Site: cross-site` 的例外范围、放行方法与路径白名单）
   - 验收：常量默认值为 `false`，未认证请求仍 401/403；签字未取得时该常量 MUST 保持 `false`（在代码注释与报告中写明签字要求与既定默认值语义）；**MUST NOT 为它新增配置字段**（`Config` 归 change 2，`§11`）；签字时间与范围记入 `docs/roadmap.md`
   - 依赖：1.5；design D-1（配置面）/ D-3（`trust-fence.ts` 先例拒 `Origin: null`/`cross-site`，自述「不是认证」）；spec「C 层开关为代码常量且默认关闭」
-- [ ] 1.8 传参解析：hash → query → path 段优先级实现，原样记录形态与合法性判定（不静默修正）
+- [x] 1.8 传参解析：hash → query → path 段优先级实现，原样记录形态与合法性判定（不静默修正）
   - 产物：`src/routes/probe.ts` 内或 `src/client/probe/params.ts` 的解析模块
   - 验收：单测覆盖 `#600000` → `600000`、三形态同时提供时的优先级、`SH600000` / `600000.SH` 原样记录、非 6 位与空态（MUST NOT 猜测补全）
   - 依赖：1.3；design D-5
-- [ ] 1.9 单测（零 mock，测试 seam；评审 Issue 16 / R2-7）
+- [x] 1.9 单测（零 mock，测试 seam；评审 Issue 16 / R2-7）
   - 产物：`test/**` 用例（`createProbeHandler(deps)` 纯工厂 + `IncomingMessage`/`ServerResponse` 桩；端到端时用真实临时 `node:http` server + `node:net` 裸 socket 驱动）
   - 验收：断言 401/403 拒绝码、传参优先级、注入转义、方法不匹配、`no-store` 头、`PROBE_HTML` 标记与无外链；**`test/**` MUST NOT 出现 `fetch(` / `http.request` 调用点**（`§7` 补充口径：结构断言作用域 = `src/**`，显式豁免 `test/**` 与内联 HTML 常量 `PROBE_HTML`）；扫描型用例先断言目标非空（`targets.length > 0`）且 MUST NOT 把 `PROBE_HTML` 文本计入扫描目标
   - 依赖：1.3–1.8；design D-10（含「与 `§7` 出站通道口径的边界」）
-- [ ] 1.10 构建产物与发包白名单验收（评审 Issue 7）
+- [x] 1.10 构建产物与发包白名单验收（评审 Issue 7）
   - 产物：构建断言用例 + 验收记录
   - 验收：`pnpm build` 后 `lib/**` 含探针页标记；`package.json#files` 含 `lib`（若改判 `lib/assets` 方案则含之且 `.gitignore` 不忽略）；从 `lib/` 加载时 `GET PROBE_PATH`（`/dsh-trader-kit/probe`）返回 200 且 `text/html` **非空**（无 ENOENT 误判）
   - 依赖：1.3、1.2
