@@ -7,8 +7,23 @@
 #
 # 个人工程、单实例挂载：不需要 better-sidebar 那种聚合双挂载守卫表达式。
 #
-# 阶段 2（桥）起 config 将按需扩展；当前无配置面。
-# （格式依据：E:\work\code\open\dsh-plugins\DSH-better-sidebar\cordis.patch.yml）
+# config 段（change 2 data-foundation 首次落地 `src/config.ts` 后生效）：
+# 只写占位符/注释示例——MUST NOT 写个人 vault 绝对路径，MUST NOT 写签章现值；
+# 本机实例路径与本机签章走 profile 层或本文件注释示例（<...> 为占位符）：
+#
+#   - insert:
+#       - id: trader-kit
+#         name: 'dsh-trader-kit'
+#         config:
+#           dataRoot: '<你的 vault 数据根>'          # 例：<数据根>（含 DB/review、agent/skills）
+#           sources:                                 # S7 sign/ts 等源参数走 profile 层
+#             s7:
+#               sign: '<S7 sign 占位>'
+#               ts: '<S7 ts 占位>'
+#           skill:
+#             installDir: '<可选：绝对安装根，缺省取 <项目根>/.dsh/skills>'
+#
+# 当前（change 2 配置面未落地）不写 config 段——插件以默认值挂载。
 - insert:
     - id: trader-kit
       name: 'dsh-trader-kit'
