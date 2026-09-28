@@ -152,7 +152,19 @@ describe('D-TQ 选项 B 最小 stub（tasks 3.1b：不接线、不调 TQ）', ()
 
 describe('registerReview 装配（tasks 1.12：service key traderKit.review.*）', () => {
   function fakeCtx(traderKit: unknown): Context {
-    return { traderKit } as unknown as Context
+    // 波 3 起 registerReview 依次调 attachReviewService/registerReviewRoutes/registerReviewDaily：
+    // 后两者需要 tools.register / effect / connection / webServer 面——装配为 no-op（真实行为由各自线的装配测试覆盖）。
+    return {
+      traderKit,
+      tools: { register: () => () => {} },
+      effect: (body: () => unknown) => { body(); return () => {} },
+      webServer: { register: () => () => {}, port: 41000, host: '127.0.0.1' },
+      connection: {
+        requestRejection: () => 401 as const,
+        authenticatedUrl: (u: string) => `${u}?token=stub`,
+      },
+      logger: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
+    } as unknown as Context
   }
 
   it('未就绪（registerData 之前）→ 显式抛错', () => {

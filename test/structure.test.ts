@@ -141,7 +141,7 @@ describe('④ 源码与依赖中不存在 order_stock / cancel_order 调用路�
 })
 
 describe('⑥ T0/T1/T2 入参 schema 无 refresh（属性扫描，keys 非空）', () => {
-  it('三份工具 schema 不含 refresh / 刷新开关', () => {
+  it('数据面三工具 schema 不含 refresh / 刷新开关（每日汇总四工具另有同款断言）', () => {
     const { ctx, config, registeredTools } = createFakeContext(false)
     registerData(ctx as never, config, {
       health: { start: () => {}, whenReady: async () => {}, dataStatus: () => ({ probedAt: null, totalTimeoutMs: 3000, targets: {}, warnings: [] }) },
@@ -172,7 +172,9 @@ describe('装配面结构（挂载后可观察，支撑 7.2）', () => {
   it('apply 挂载（probe 关闭）注册 3 工具 + 提供 traderKit data 四出口 + health 两段视图', () => {
     const { ctx, registeredTools, provided } = createFakeContext(false)
     expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    expect(registeredTools.map((t) => t.name)).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
+    // 波 3 起：数据面 3 + 每日汇总 4 = 7（清单见 test/smoke.test.ts）。
+    expect(registeredTools.length).toBe(7)
+    expect(registeredTools.slice(0, 3).map((t) => t.name)).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
     const api = provided['traderKit'] as {
       data: Record<string, unknown>
       health: { status(): { data: { warnings: string[] }; skill: unknown } }

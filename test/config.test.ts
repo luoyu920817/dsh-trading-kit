@@ -87,7 +87,8 @@ describe('未配置 dataRoot → 挂载成功且写入报错', () => {
     const { ctx, registeredTools } = createFakeContext()
     // 测试零真实出站：probe 显式关闭（生产默认开，owner 裁决 2026-09-27）。
     expect(() => apply(ctx as never, { dataRoot: '', diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    expect(registeredTools.length).toBe(3)
+    // 波 3 起：数据面 3 + 每日汇总 4 = 7（见 test/smoke.test.ts 同款登记）。
+    expect(registeredTools.length).toBe(7)
     expect(() => resolveArea('', 'review', { code: '600000', name: '浦发银行', date: '20260924' }, { forWrite: true }))
       .toThrow(/dataRoot/)
     // 磁盘无任何新增文件由 resolveArea 的纯解析性质保证（无 fs 调用）。
