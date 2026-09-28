@@ -1,16 +1,19 @@
 /**
- * 装配点（change 4 review-page / change 5 daily-summary）：复盘存储的 service
- * 出口注册（tasks 1.12）。
+ * 装配点（change 4 review-page / change 5 daily-summary）：复盘线总装配。
  *
  * 主装配只保留一行调用（`src/index.ts` 的 `registerReview(ctx)`）；本文件
  * `MUST NOT` 重建 `provide('traderKit')`——`traderKit` 服务的唯一装配面在
  * `src/service/index.ts`（change 2），这里只对既有服务追加 `api.review`。
  *
- * 路由族（`/review*`，tasks §2）为承载绑定层（`blocked_by: change 1`），不在
- * 本文件范围内；`NameResolver`/`TradeDateResolver` 的接线（tasks §3）在页面
- * 装配点落地。
+ * 三个注册位（波 3 起）：
+ * ① `attachReviewService`——存储五导出（tasks 1.12，已落地）；
+ * ② `registerReviewRoutes`——/review 路由族（tasks §2，change 4 承载绑定层）；
+ * ③ `registerReviewDaily`——每日汇总工具与 dailyReport 出口（change 5，src/tools/review-daily.ts）。
+ * 各 change 只动自己的文件，本文件只保留三行调用。
  */
 import type { Context } from '../context-types.ts'
+import { registerReviewDaily } from '../tools/review-daily.ts'
+import { registerReviewRoutes } from '../routes/review.ts'
 import {
   appendAinote,
   appendCard,
@@ -29,7 +32,8 @@ export interface ReviewServiceApi {
   scanDailyCardTargets: (tradeDate: string) => ReturnType<typeof scanDailyCardTargets>
 }
 
-export function registerReview(ctx: Context): void {
+/** ① 存储五导出挂到 `api.review`（tasks 1.12）。 */
+function attachReviewService(ctx: Context): void {
   const api = ctx.traderKit
   if (api === undefined) {
     throw new Error('registerReview 必须在 registerData 之后调用（ctx.traderKit 未挂载）')
@@ -47,4 +51,11 @@ export function registerReview(ctx: Context): void {
     scanDailyCardTargets: (tradeDate: string) => scanDailyCardTargets(tradeDate, dataRoot),
   }
   api.review = reviewApi as unknown as Record<string, unknown>
+}
+
+/** 复盘线总装配：服务面 → 路由族（change 4）→ 每日汇总（change 5），顺序即依赖序。 */
+export function registerReview(ctx: Context): void {
+  attachReviewService(ctx)
+  registerReviewRoutes(ctx)
+  registerReviewDaily(ctx)
 }
