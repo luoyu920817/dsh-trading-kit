@@ -28,7 +28,7 @@
 | └ 规则源 | `dsh-trading\AGENTS.md` | 安全红线与纪律的参照基线 |
 | 插件范式参照 | `E:\work\code\open\dsh-plugins\DSH-better-sidebar` | 单包插件 + dsh.plugin.json + cordis.patch.yml 双通道先例、跨插件服务先例 |
 | 同类先例 | `E:\work\code\open\dsh-plugins\dsh-market` | 发布流与 preflight 先例（个人工程暂不需要） |
-| vault（资产层） | `C:\Users\luoyu\OneDrive\应用\remotely-save\finance` | 阶段 4 起读写，沿 vault-integration 写分区契约（只写既定产物区） |
+| vault（资产层） | `C:\Users\luoyu\OneDrive\应用\remotely-save\finance` | 阶段 4 起读写，沿 vault-integration 写分区契约（只写既定产物区；本迭代白名单 = `DB/review/` 与 `agent/DB/temp/dsh-trader-kit/`） |
 
 ## 工程契约
 
@@ -48,8 +48,9 @@
   判断 → 自建。
 - **宿主 cohort**：`dsh.plugin.json` 的 engines.dsh 是下限占位；宿主与 SDK
   版本以当前实际安装核验，不硬编码旧版本（沿 dsh-trading 契约）。
-- **vault 写入**：阶段 4 起才触 vault；写入沿 vault-integration 的写分区与
-  原子写契约，人工判断字段不代改。
+- **vault 写入**：除本迭代两条白名单路径外（`DB/review/` 复盘卡片产物区；
+  `agent/DB/temp/dsh-trader-kit/` 数据工具缓存与运行摘要区），阶段 4 起才触
+  vault；写入沿 vault-integration 的写分区与原子写契约，人工判断字段不代改。
 
 ## 按需阅读
 

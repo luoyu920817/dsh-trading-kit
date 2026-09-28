@@ -62,6 +62,7 @@ dsh-trading）；只有本工作流的流程与判断 → 工作流层（自建�
 
 - **宿主 HTTP 面**：插件经 `ctx.webServer.register({kind:'exact'|'prefix', path, handler})` 在宿主同一 node:http 服务器上挂自有路由（**宿主不代插件鉴权**——handler 首行自行调 `ctx.connection.requestRejection`）；URL 经挂载时打印（端口可漂移）。探针页常驻诊断：`GET /dsh-trader-kit/probe`。
 - **TDX 内嵌浏览器（实测，Chrome 81 / TdxW UA）**：可直接贴 http URL 打开同端口页面；ES2017 + Fetch + Promise 基线可解析；12 项内核特性探测全命中。**联动边界**：页面 → TDX 切标的用导航 `http://www.treeid/code_<代码>`（现网生产验证；6 种 JS 写法 0/6、window.open 被拦）；**TDX → 页面反向跟随不存在**（切换标的不改写内嵌页 hash）。详见 `docs/spikes/tdx-embed.md`。
+- **复盘页（同端口二级页面，review-page 落地 2026-09-27）**：`GET /dsh-trader-kit/review`（exact 路由 + `/review/<code>` 直链 + hash/query 传参），与探针页共用宿主 HTTP 面（宿主不代插件鉴权，handler 首行自行调 `requestRejection`）。产物落 `<dataRoot>/DB/review/<YYYYMM>/<代码>_<名称>_<YYYYMMDD>.md`（`DB/review/` 为本迭代唯一新增写分区，卡片 = 文档内分节、append-only）。认证：写卡只认 A 层（宿主 cookie）；页面只读 C 层未签字前不提供未认证读；TDX 内 A 层未验证存活 → 页面只读降级 + 提示 DSH 侧写卡。「阶段 2 桥取消」结论（§4 阶段 2 行：独立桥阶段取消，宿主 HTTP 面由探针 + 复盘页直接验证）即本页的承载前提。
 
 ## 5. 红线（不可让步项）
 
