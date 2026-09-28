@@ -113,27 +113,32 @@
 
 ## 4. 出口与门禁
 
-- [ ] 4.1 `Config.skill` 段（**在 change 2 的 `src/config.ts` 中追加**）+ 配置校验 + 挂载实测
+- [x] 4.1 `Config.skill` 段（**在 change 2 的 `src/config.ts` 中追加**）+ 配置校验 + 挂载实测
+  - 实现登记（2026-09-28，组装波次）：`src/config.ts` 追加 `ResolvedSkillConfig`（sourceUrl 默认 DEFAULT_TQ_SKILL_SOURCE_URL / installDir 默认 '' / minVersion '1.2.0' / autoCheck true / checkIntervalHours 24 / extraSkillRoots [] / limits 三项）；resolve 期校验 sourceUrl https + installDir 落点禁令（§10 白名单豁免——`<dataRoot>/agent/skills` 合法）；append-only 用例断言 dataRoot 默认值逐字符不变；挂载实测 = test/skill/assembly.test.ts「默认组合不报错」+ `test/fixtures/mount-config-evidence.md` 由 smoke/config 全量 apply 用例承载（空 dataRoot + 默认 skill 段共存挂载成功）
   - 产物：**在 change 2 已落地的 `src/config.ts` 中追加 `skill` 段**（`sourceUrl`/`installDir`/`minVersion`/`autoCheck`/`checkIntervalHours`/`extraSkillRoots`/`limits`）；**MUST NOT 新建或覆盖 `src/config.ts`，MUST NOT 改 `dataRoot` 默认值与既有字段**（`contracts §11`）；`cordis.patch.yml` 的 `config` 段（**占位符/注释示例，不含个人机器路径**）
   - 验收：①挂载实测：空 `dataRoot` + 默认 `skill` 段共存时加载成功（证据落 `test/fixtures/mount-config-evidence.md`）；②配置校验单测：`sourceUrl` 非 `https:` → 报错；`installDir` 落在 `dataRoot`/vault/插件包目录内 → 报错（**豁免 `contracts §10` 白名单区**：`dataRoot/agent/skills/` 等）；`targetRoot` 是**更前 rank root 的后代** → `TMP_AREA_IN_SCAN_ROOT`；**反向控制：`installDir`/`targetRoot` 取默认值 → MUST NOT 报错**；localDir 源的 `targetRoot = <dataRoot>/agent/skills` → **合法**（MUST NOT 被 https 落点禁令否决）；③变更 `skill` 段与 `dataRoot` 并存时字段互不覆盖；④文件级断言：`src/config.ts` 的 `dataRoot` 默认值与 change 2 交付时**逐字符一致**（追加式改动证明）
   - 依赖：**change 2 的 `Config` 导出 + `dataRoot`（blocked_by: change 2）**；1.2、2.1
-- [ ] 4.2 注册工具 `tq_skill_manage`（`action: install | update | status | deploy | uninstall`）+ 输出 schema 与渲染
+- [x] 4.2 注册工具 `tq_skill_manage`（`action: install | update | status | deploy | uninstall`）+ 输出 schema 与渲染
+  - 实现登记（2026-09-28）：`src/skill/index.ts`（runTqSkillManage 单点分派 + createTqSkillManageTool；install 经延迟 archiveProvider——断言通过后才出站）；测试 test/skill/assembly.test.ts（非法 action 拒绝 / deploy 缺参拒绝 / schema 无 refresh / 输出面字段）
   - 产物：`src/tools/tq-skill.ts`（`ctx.tools.register(defineTool({...}))`）；入参含 `action`、`force?`（降级）、`cwd?`、`purge?`（uninstall）、本地目录源 `sourcePath?` / **`targetRoot?` / `name?`**；描述用中文写明「源不可达时保留现版；`autoCheck` 只检查不安装；降级需 force；deploy 需显式 targetRoot+name」
   - 验收：工具 schema 单测（非法 `action` 拒绝；`force` 默认 false；`cwd` 缺省走 D-1 来源表；`deploy` 缺 `targetRoot`/`name` → 拒绝并提示）；渲染输出含 `outcome`/`version`/`path`/`warnings`/`residue`
   - 依赖：1.5、3.6、4.5
-- [ ] 4.3 service 出口：**只提供 `skill` 段数据源**（`buildSkillStatus()` / `traderKit.skill.status({ cwd? })`）
+- [x] 4.3 service 出口：**只提供 `skill` 段数据源**（`buildSkillStatus()` / `traderKit.skill.status({ cwd? })`）
+  - 实现登记（2026-09-28）：`api.skill = { status({cwd?}), deployLocalDir(...) }` 同一实现挂载（registerSkillInstaller，src/review/index.ts 式 attach 模式）；根解析失败降级为 state=missing + 配置指引（不炸组合读取）；无 api.health.status 定义（source-assertions 用例持续守护）；dsh.plugin.json contributes.tools 加 'tq_skill_manage'
   - 产物：`src/skill/status.ts` 的 `buildSkillStatus()`（单点实现，工具与 service 同一实现）；在 **change 2 的 service 装配面上追加** `api.skill.status({ cwd? })` 与 `api.skill.deployLocalDir({ sourcePath, targetRoot, name })`（**MUST NOT 重建 `src/service.ts`、MUST NOT 重置 `provide('traderKit')`**，`contracts §11`）；**MUST NOT 产出 / 注册 `api.health.status()`**
   - 验收：①字段清单断言：D-15 表中的**每个键都存在**（`null` 允许、缺键失败）；②与 change 2 两段视图的 `skill` 段**字段逐项相等**（同一实现的证明，对照 change 2 spec 声明的 `skill` 段键集/取值域）；③`status()` MUST NOT 内联出站（桩计数不变）；④源码断言：本 change **不存在 `api.health.status()` 的定义或注册**（定义/注册处命中数为 0；`src/service.ts` 只做 `api.skill.*` 的追加注册）
   - 依赖：**4.1、1.6**（change 2 的两段视图由 change 2 自行组装，本 change 只提供 `skill` 段；`contracts §11`/`§12.2`）
-- [ ] 4.4 边界断言测试：不碰 17709 / 不写 vault / 不改动官方包内容
+- [x] 4.4 边界断言测试：不碰 17709 / 不写 vault / 不改动官方包内容
+  - 实现登记（2026-09-28）：`test/skill/boundaries.test.ts` 四用例（白名单外零写入 diff[.dsh-trader-kit-tmp 暂存/meta 区豁免——安装器既定产物；未配置 dataRoot 的 skip 语义登记] / 落点 SKILL.md SHA-256 一致 / 零 17709 字面 / 零交易接口 + download.ts 外零 fetch）
   - 产物：`test/skill/boundaries.test.ts`
   - 验收：①安装器全流程中无任何到 17709 的连接（桩 + 端口探针断言）；②**不写 vault（按 `contracts §10` 收窄口径）**：断言范围 = ①`<vault>/.claude/**` 与已弃用副本区零写入；②**`dataRoot` 下既定业务区之外零写入**——安装/更新/部署前后做「文件清单 + 逐文件哈希 diff」，**MUST 把 `contracts §10` 白名单区（`dataRoot/agent/skills/`、`dataRoot/agent/DB/temp/dsh-trader-kit/`、`dataRoot/DB/review/`）排除在 diff 之外**，否则与「把 skill 装到 `agent/skills/`」自相矛盾；未配置 `dataRoot` 时**显式 skip 并输出 skip 说明**（MUST NOT 假成功）；③安装后落点 `SKILL.md` 字节与包内条目字节一致（SHA-256 相等）；④源码断言：`src/skill/**` 不 import `src/data/**`、不调用 `order_stock`/`cancel_order`
   - 依赖：1.5、2.6
-- [ ] 4.5 `uninstall` 出口（幂等，按 `name`/`targetRoot` 参数化）+ 残留清理
+- [x] 4.5 `uninstall` 出口（幂等，按 `name`/`targetRoot` 参数化）+ 残留清理
+  - 实现登记（2026-09-28）：`src/skill/uninstall.ts`（幂等 nothing-to-do / purge 控制 meta / 陈旧 run-* 残留清理[10 分钟保护窗] / 历史 legacy 目录清理）；测试四用例在 assembly.test.ts；meta.json 补 lastUninstalledAt 记录
   - 产物：`src/skill/uninstall.ts`（导出 `uninstallSkill({ cwd?, targetRoot, name, purge? })`：删除 `<targetRoot>/<name>/` + 清理 `residue`/`tmpBase` + 按 `purge` 决定是否删 `meta.json`；幂等返回 `outcome: 'uninstalled' | 'nothing-to-do'`）
   - 验收：单测——①`uninstall` 后 `list({ cwd })` 不再命中，且落点目录与 `residue` 均不存在；②二次 `uninstall` 返回 `nothing-to-do`（不报错）；③`purge: false` 保留 `meta.json` 但状态为 `missing`（以文件系统为准）；④存在历史残留时 `uninstall` 一并清理
   - 依赖：1.5、2.3
-- [ ] 4.6 门禁：`pnpm typecheck && pnpm build && pnpm test` 全绿
+- [x] 4.6 门禁：`pnpm typecheck && pnpm build && pnpm test` 全绿（638 用例 / 58 文件，2026-09-28）
   - 产物：门禁运行记录（贴出命令与结果摘要）
   - 验收：三条命令全绿；`pnpm test` 无 skip 静默项（除 4.4② 的显式 skip 说明）
   - 依赖：1.x–4.x 全部

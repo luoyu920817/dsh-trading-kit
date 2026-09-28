@@ -169,11 +169,11 @@ describe('⑥ T0/T1/T2 入参 schema 无 refresh（属性扫描，keys 非空）
 })
 
 describe('装配面结构（挂载后可观察，支撑 7.2）', () => {
-  it('apply 挂载（probe 关闭）注册 3 工具 + 提供 traderKit data 四出口 + health 两段视图', () => {
+  it('apply 挂载（probe 关闭）注册 8 工具 + 提供 traderKit data 四出口 + health 两段视图', async () => {
     const { ctx, registeredTools, provided } = createFakeContext(false)
     expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    // 波 3 起：数据面 3 + 每日汇总 4 = 7（清单见 test/smoke.test.ts）。
-    expect(registeredTools.length).toBe(7)
+    // 波 4 起：数据面 3 + tq_skill_manage + 每日汇总 4 = 8（清单见 test/smoke.test.ts）。
+    expect(registeredTools.length).toBe(8)
     expect(registeredTools.slice(0, 3).map((t) => t.name)).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
     const api = provided['traderKit'] as {
       data: Record<string, unknown>
@@ -183,7 +183,11 @@ describe('装配面结构（挂载后可观察，支撑 7.2）', () => {
       expect(typeof api.data[fn], `data.${fn} 出口存在`).toBe('function')
     }
     const status = api.health.status()
-    expect(status.skill).toBeNull() // change 3 未挂载：skill 段 null
-    expect(status.data.warnings.join('\n')).toContain('skill')
+    // 波 4 起 change 3 已挂载：skill 段 = skill.status() 的透传（Promise，同一实现）——
+    // await 验证它是真实的 SkillStatus 结论（state/targetRoot），不再是 null。
+    expect(status.skill).not.toBeNull()
+    const skillView = await (status.skill as Promise<{ state: string; targetRoot: string }>)
+    expect(typeof skillView.state).toBe('string')
+    expect(typeof skillView.targetRoot).toBe('string')
   })
 })

@@ -38,10 +38,11 @@ describe('dsh-trader-kit 装配面', () => {
     const { ctx, registeredTools, provided } = createFakeContext()
     // 测试零真实出站：启动探测（diagnostics.probe）在单测中显式关闭（生产默认开）。
     expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    // 波 3 起：数据面 3 工具 + change 5 每日汇总 4 工具（review_daily_scan/read_daily/append_ainote/daily_report）。
-    expect(registeredTools.length).toBe(7)
+    // 波 3 起：数据面 3 + change 5 每日汇总 4 + change 3 tq_skill_manage 1 = 8。
+    expect(registeredTools.length).toBe(8)
     expect(registeredTools).toEqual([
       'get_trade_date', 'get_limit_reason', 'get_concepts',
+      'tq_skill_manage',
       'review_daily_scan', 'review_read_daily', 'review_append_ainote', 'review_daily_report',
     ])
     const api = provided.traderKit as { health: { status(): unknown } } | undefined

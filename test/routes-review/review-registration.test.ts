@@ -230,7 +230,7 @@ describe('C 层开关两态（tasks 2.2；生产默认 false，复盘页签字�
 })
 
 describe('装配面结构（挂载后可观察）', () => {
-  it('apply 全量挂载（探针开启）→ 数据工具 3 + 每日汇总 4 + 复盘路由 6 + 探针 1，互不冲突', () => {
+  it('apply 全量挂载（探针开启）→ 数据工具 3 + tq_skill_manage 1 + 每日汇总 4 + 复盘路由 6 + 探针 1，互不冲突', () => {
     const h = createHarness({ dataRoot: makeTempRoot() })
     const registeredTools: unknown[] = []
     const ctxObj = h.ctx as unknown as Record<string, unknown>
@@ -239,7 +239,8 @@ describe('装配面结构（挂载后可观察）', () => {
       return () => {}
     } }
     expect(() => apply(h.ctx, resolveTraderKitConfig({}))).not.toThrow()
-    expect(registeredTools.length).toBe(7)
+    // 波 4 起：+ tq_skill_manage = 8。
+    expect(registeredTools.length).toBe(8)
     expect(h.routes).toHaveLength(7)
   })
 })

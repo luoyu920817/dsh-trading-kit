@@ -31,6 +31,6 @@ export function apply(ctx: Context, config?: TraderKitConfig): void {
   const resolved = resolveTraderKitConfig(config)
   registerProbe(ctx)
   registerData(ctx, resolved)
-  registerSkillInstaller(ctx)
+  registerSkillInstaller(ctx, resolved)
   registerReview(ctx)
 }
