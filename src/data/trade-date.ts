@@ -100,19 +100,30 @@ export async function resolveTradeDate(deps: DataDeps, input: TradeDateInput = {
   if (s7.ok && businessDate === null && Object.keys(s7.rows).length > 0) {
     const listCodes = new Set(Object.keys(s7.rows))
     let probeDay: string | null = fromIsoShift(rateLimit, -1)
-    for (let i = 0; i < 6 && probeDay !== null; i++) {
+    let outbound = 0 // 真实出站探针数（缓存命中不计额度——否则长假期会耗尽 6 次）
+    for (let i = 0; i < 30 && probeDay !== null && outbound < 6; i++) {
       const probeDate = probeDay
+      const budgetBefore = deps.guard.status().budgetUsed
       const h = await fetchS7List(deps, probeDate)
-      if (!h.ok || Object.keys(h.rows).length === 0) {
-        probeNotes.push(`探针 ${probeDate}: 无数据`)
+      const isOutbound = deps.guard.status().budgetUsed > budgetBefore
+      // 缓存毒化防护（owner 实测 bug 2026-10-06）：该日期曾是「当日」时缓存条目来自
+      // List（businessDate=null，实际是更早会话的数据）——跳过，MUST NOT 用探针日期兜底。
+      if (!h.ok || Object.keys(h.rows).length === 0 || h.businessDate === null) {
+        probeNotes.push(
+          !h.ok ? `探针 ${probeDate}: 失败`
+          : Object.keys(h.rows).length === 0 ? `探针 ${probeDate}: 无数据`
+          : `探针 ${probeDate}: 缓存条目无业务日（List 缓存，会话归属不可证）——跳过`,
+        )
         probeDay = fromIsoShift(probeDate, -1)
+        if (isOutbound) outbound += 1
         continue
       }
+      if (isOutbound) outbound += 1
       const probeCodes = new Set(Object.keys(h.rows))
       const identical = listCodes.size === probeCodes.size
         && [...listCodes].every((c) => probeCodes.has(c))
       if (identical) {
-        businessDate = h.businessDate ?? probeDate
+        businessDate = h.businessDate
         isTradingDay = null // D ≠ 限流日 → 归属待确认（休市日场景，页面预填 D）
         probeNotes.push(`会话集合比对：List 与 ${businessDate} 的代码集合一致（${listCodes.size} 只）→ List 为该日会话`)
       } else {
@@ -123,7 +134,7 @@ export async function resolveTradeDate(deps: DataDeps, input: TradeDateInput = {
       break
     }
     if (!probeNotes.some((n) => n.includes('→'))) {
-      probeNotes.push('前探 6 日均无数据（数据源未覆盖）——businessDate 保持 null')
+      probeNotes.push('前探无可用业务日（数据源未覆盖或条目不可归属）——businessDate 保持 null')
     }
   }
 

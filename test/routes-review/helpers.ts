@@ -165,12 +165,12 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
 }
 
 /** 从页面响应体解析注入的 window.__REVIEW__（转义后的 JSON 可直接 parse）。 */
-export function injectedReviewState(body: string): { writable: boolean; basePath: string; routePath: string; injectedAt: string } {
+export function injectedReviewState(body: string): { writable: boolean; writeKey: string; basePath: string; routePath: string; injectedAt: string } {
   const match = /window\.__REVIEW__ = (\{[\s\S]*?\});/.exec(body)
   if (match === null) {
     throw new Error('window.__REVIEW__ 未注入（响应体不含复盘页状态）')
   }
-  return JSON.parse(match[1]) as { writable: boolean; basePath: string; routePath: string; injectedAt: string }
+  return JSON.parse(match[1]) as { writable: boolean; writeKey: string; basePath: string; routePath: string; injectedAt: string }
 }
 
 /** 解析 JSON 响应体的最小辅助（断言可读性）。 */

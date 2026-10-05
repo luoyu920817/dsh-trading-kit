@@ -261,3 +261,41 @@ describe('结构断言（4.3）：trade-date.ts 不自行推断交易日', () =>
     }
   })
 })
+
+
+describe('缓存毒化防护（owner 实测 bug 2026-10-06：List 缓存条目无业务日，探针跳过）', () => {
+  it('次日探针跳过前一日 List 缓存（businessDate=null），定位到 09-30 而非误报当日', async () => {
+    const stub = await startDataStub()
+    const root = await createTempDataRoot()
+    // 可变时钟：day1 = 2026-10-05（假期，rateLimit=10-05）；day2 = 2026-10-06（假期，rateLimit=10-06）
+    let now = new Date('2026-10-05T08:00:00Z')
+    const deps = createTestDeps({ dataRoot: root.dataRoot, stub, now: () => now })
+    stub.setResponder((req) => {
+      // History：假期日（10-01..10-05）回显日期 + 空 list；交易日回显日期 + 数据
+      if (req.path.includes('surgeLimitHistory')) {
+        const compact = req.query.get('date') ?? ''
+        const rows = compact === '20260930' ? { '600000': { cause: '重组', first: '0931', last: '0931' } } : {}
+        return { json: s7Payload(compact, rows) }
+      }
+      // List：市场休市 → 返回最近会话（09-30）的 52 只（此处 1 只模拟），无日期字段
+      if (req.path.includes('surgeLimitList')) return { json: s7Payload(null, { '600000': { cause: '重组', first: '0931', last: '0931' } }) }
+      if (req.path.includes('anomaly/v1/history')) return { json: s5HistoryPayload(0, []) }
+      return undefined
+    })
+    try {
+      // day1（10-05）：T0 → 探针 10-04..10-01 空、09-30 命中 → businessDate=09-30
+      const day1 = await resolveTradeDate(deps, {})
+      expect(day1.businessDate).toBe('2026-09-30')
+      // day2（10-06）：探针从 10-05 起步——**命中 day1 的 List 缓存（businessDate=null）**，
+      // 修复前：`?? probeDate` 把 10-05 当业务日（毒化）；修复后：跳过，最终仍定位 09-30。
+      now = new Date('2026-10-06T08:00:00Z')
+      const day2 = await resolveTradeDate(deps, {})
+      expect(day2.businessDate).toBe('2026-09-30')
+      expect(day2.isTradingDay).toBeNull()
+      expect(day2.notes.some((n) => n.includes('无业务日'))).toBe(true)
+    } finally {
+      await stub.close()
+      await root.cleanup()
+    }
+  })
+})
