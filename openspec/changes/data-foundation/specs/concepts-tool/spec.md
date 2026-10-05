@@ -94,17 +94,22 @@ S8 请求的 `fields` SHALL 扩为 `core_avg_pcp,plate_name,reason,plate_id,top_
 
 ### Requirement: 概念缓存
 
-概念结果 SHALL 复用 `data-tool-contract` 的**两层缓存**：列表级（键 = **`concepts + requestedDate`**——概念模块的列表级键，与 `data-tool-contract` 的 `source + requestedDate` 同构（`source` 位在概念模块取固定标识 `concepts`），**由入参构造**，payload 内含 `businessDate`（源无日期字段时允许 `null`，见 `data-tool-contract` 缓存例外）与整份 S8 概念响应）与 code 派生视图级（键 = `requestedDate + code`）。MUST NOT 用 `businessDate` 做键（响应到达前不可知）。同交易日重复调用零网络；缓存落 `agent/DB/temp/dsh-trader-kit/<YYYYMMDD>/`（按 `requestedDate` 折算，MUST NOT 用 `businessDate=null` 或源返回日期做目录段），写入遵循 `data-tool-contract` 的原子写、幂等与 `cacheSchema` 不匹配即视为未命中的要求。频控预算按列表级请求数计。
+概念结果 SHALL 复用 `data-tool-contract` 的**两层缓存**：列表级（键 = **`concepts:<code> + requestedDate`**——**owner 实测修订 2026-10-05**：S8 `plates_by_any_stock` 响应**按 symbol 裁剪**（不同代码返回不同板块集，未收录代码返回空 `data`），原「`concepts + requestedDate` 按日共享、跨标的派生」的假设证伪（603919 命中 000002 缓存导致标签串股）；键由入参构造且**含 code**；payload 内含 `businessDate`（源无日期字段时允许 `null`）与整份 S8 概念响应——**空响应同样入缓存**（负缓存，未收录标的当日内零重复出站））与 code 派生视图级（键 = `requestedDate + code`）。MUST NOT 用 `businessDate` 做键（响应到达前不可知）。同交易日重复调用零网络；缓存落 `agent/DB/temp/dsh-trader-kit/<YYYYMMDD>/`（按 `requestedDate` 折算，MUST NOT 用 `businessDate=null` 或源返回日期做目录段），写入遵循 `data-tool-contract` 的原子写、幂等与 `cacheSchema` 不匹配即视为未命中的要求。频控预算按列表级请求数计。
 
 #### Scenario: 当日缓存命中
 
 - **WHEN** 当日已缓存某标的且再次调用
 - **THEN** 零网络请求返回与首次一致的结果
 
-#### Scenario: 同一列表派生多标的只取一次
+#### Scenario: 跨标的不串股（键含 code，owner 实测修订 2026-10-05）
 
-- **WHEN** 同一交易日先后请求 5 个不同标的（S8 响应为整份列表）
-- **THEN** 列表级请求数为 1、预算用量 +1；其余请求命中派生视图或列表级缓存，零网络
+- **WHEN** 同一请求日先查 `000002`（S8 返回其板块集）再查 `603919`（S8 返回空）
+- **THEN** 两次均为独立列表级请求（列表级请求数 2）；603919 的标签为**显式不可用**（空数据）而非 000002 的板块；603919 的名称反查未命中 → 由行情名称源兜底（review-page 层②）
+
+#### Scenario: 同一列表派生多标的只取一次（修订：同标的同参数）
+
+- **WHEN** 同一交易日对**同一标的**以相同入参重复调用（S8 响应按 symbol 裁剪——响应域 = 该标的）
+- **THEN** 列表级请求数为 1、预算用量 +1；后续调用命中列表级/派生视图缓存，零网络（**原「5 个不同标的 → 1 次请求」的语义作废**——跨标的是不同列表）
 
 #### Scenario: 跨日不命中
 

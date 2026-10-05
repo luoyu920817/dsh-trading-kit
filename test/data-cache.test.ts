@@ -63,8 +63,8 @@ describe('当日重复调用零网络', () => {
   })
 })
 
-describe('同一列表派生多标的只取一次（T2 概念列表）', () => {
-  it('5 个标的 → 列表级请求 1、预算 +1，其余零网络', async () => {
+describe('T2 概念缓存（owner 实测修订 2026-10-05：S8 响应按 symbol 裁剪，键含 code）', () => {
+  it('同标的同参数重复调用 → 列表级请求 1、预算 +1，第二次零网络', async () => {
     const h = await createHarness((req) => {
       if (req.path.includes('plates_by_any_stock')) {
         return { json: s8Payload({
@@ -75,14 +75,42 @@ describe('同一列表派生多标的只取一次（T2 概念列表）', () => {
       return undefined
     })
     try {
-      const codes = ['600000', '600519', '601318', '600036', '601398']
-      const results = []
-      for (const code of codes) results.push(await getConcepts(h.deps, { code }))
+      await getConcepts(h.deps, { code: '600000' })
+      await getConcepts(h.deps, { code: '600000' })
       expect(h.stub.count('plates_by_any_stock')).toBe(1)
       expect(h.deps.guard.status().budgetUsed).toBe(1)
-      // 整份列表派生：列表内命中的标的取到名称；列表外标的 name=null（不猜）。
-      expect(results[0]?.name).toBe('浦发银行')
-      expect(results[1]?.name).toBeNull()
+    } finally {
+      await h.cleanup()
+      await h.stub.close()
+    }
+  })
+
+  it('跨标的不串股：000002 与 603919 各自独立请求，603919 空数据显式不可用（不命中 000002 缓存）', async () => {
+    const h = await createHarness((req) => {
+      if (req.path.includes('plates_by_any_stock')) {
+        if (req.query.get('symbol') === '000002.SZ') {
+          return { json: s8Payload({
+            p1: { core_avg_pcp: 0.05, plate_name: '破净股', reason: 'rk', plate_id: 'p1', top_n_stocks: { items: [{ symbol: '000002.SZ', stock_chi_name: '万  科Ａ' }] } },
+          }) }
+        }
+        return { json: s8Payload({}) } // 603919 未收录 → 空 data
+      }
+      return undefined
+    })
+    try {
+      const a = await getConcepts(h.deps, { code: '000002' })
+      const b = await getConcepts(h.deps, { code: '603919' })
+      expect(h.stub.count('plates_by_any_stock')).toBe(2)
+      expect(h.deps.guard.status().budgetUsed).toBe(2)
+      expect(a.available).toBe(true)
+      expect(a.concepts.map((c: { name: string }) => c.name)).toEqual(['破净股'])
+      // 603919：空数据 → 显式不可用（MUST NOT 命中 000002 的缓存串股）。
+      expect(b.available).toBe(false)
+      expect(b.name).toBeNull()
+      // 负缓存：同标的第二次仍零网络。
+      const b2 = await getConcepts(h.deps, { code: '603919' })
+      expect(h.stub.count('plates_by_any_stock')).toBe(2)
+      expect(b2.available).toBe(false)
     } finally {
       await h.cleanup()
       await h.stub.close()

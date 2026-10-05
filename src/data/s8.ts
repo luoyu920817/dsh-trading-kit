@@ -93,9 +93,12 @@ export async function fetchS8Plates(deps: DataDeps, input: { code: string }): Pr
       return failure([`选股宝 API 返回异常：${String(apiCode ?? '缺失')} - ${String(envelope?.message ?? '未知错误')}`], { apiCode, fetchedAt })
     }
     const data = envelope?.data
-    if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
-      return failure(['选股宝 API 返回空数据'], { apiCode, fetchedAt })
+    if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
+      return failure(['选股宝 API 返回异常：data 非对象'], { apiCode, fetchedAt })
     }
+    // 空对象 = 源端确认「该标的无板块数据」（owner 实测 2026-10-05：未收录代码返回
+    // 空 data）——ok=true + 空 plates，由概念缓存负缓存（当日零重复出站），
+    // assemble 判 available=false；MUST NOT 当作源错误（会让"未收录"无法缓存）。
     return {
       ok: true,
       apiCode,

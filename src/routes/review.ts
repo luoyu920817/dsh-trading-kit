@@ -310,7 +310,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       routePath: pageExact,
       injectedAt: new Date().toISOString(),
     }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
     res.end(injectReviewState(deps.htmlTemplate, state))
   }
 
@@ -622,7 +622,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       return
     }
     const ext = rel.slice(rel.lastIndexOf('.'))
-    res.writeHead(200, { 'Content-Type': ASSET_MIME_BY_EXT[ext], 'Cache-Control': 'no-cache' })
+    res.writeHead(200, { 'Content-Type': ASSET_MIME_BY_EXT[ext], 'Cache-Control': 'no-store' })
     res.end(body)
   }
 

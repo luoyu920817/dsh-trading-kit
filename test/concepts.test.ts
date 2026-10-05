@@ -154,13 +154,19 @@ describe('名称命中与未命中', () => {
   })
 })
 
-describe('空数据显式不可用', () => {
-  it('data 为空对象 → available=false，不用空列表冒充成功', async () => {
+describe('空数据显式不可用（owner 实测修订 2026-10-05：空 = 未收录，负缓存）', () => {
+  it('data 为空对象 → available=false + 负缓存（第二次零网络），不用空列表冒充成功', async () => {
     await withHarness({}, async (h) => {
       const r = await getConcepts(h.deps, { code: '600000' })
       expect(r.available).toBe(false)
-      expect(r.errors.length).toBeGreaterThan(0)
+      // 未收录 = 源端正常应答（非源错误）——errors 空，notes 记负缓存事实。
+      expect(r.errors).toEqual([])
+      expect(r.notes.some((n) => n.includes('未收录'))).toBe(true)
       expect(r.concepts).toEqual([])
+      const countBefore = h.stub.count('plates_by_any_stock')
+      const r2 = await getConcepts(h.deps, { code: '600000' })
+      expect(h.stub.count('plates_by_any_stock')).toBe(countBefore) // 负缓存零出站
+      expect(r2.available).toBe(false)
     })
   })
 })

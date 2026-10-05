@@ -201,8 +201,9 @@ export async function getConcepts(deps: DataDeps, input: ConceptsInput): Promise
     }
   }
 
-  // 列表级缓存（键 = concepts + requestedDate；payload = 整份 S8 响应）。
-  const cachedList = await deps.cache.readList<{ plates: Record<string, unknown> }>('concepts', CONCEPTS_CACHE_SCHEMA, 'concepts', requestedDate)
+  // 列表级缓存（键 = concepts-<code> + requestedDate——owner 实测修订 2026-10-05：
+  // S8 plates_by_any_stock 响应按 symbol 裁剪，键 MUST 含 code，否则跨标的串股）。
+  const cachedList = await deps.cache.readList<{ plates: Record<string, unknown> }>('concepts', CONCEPTS_CACHE_SCHEMA, 'concepts-' + code, requestedDate)
   if (cachedList !== null) {
     const result = assemble({ plates: cachedList.payload.plates, fetchedAt: cachedList.fetchedAt, notes: [], errors: [], guard: null })
     if (result.available) {
@@ -230,7 +231,7 @@ export async function getConcepts(deps: DataDeps, input: ConceptsInput): Promise
     }
   }
 
-  await deps.cache.writeList('concepts', CONCEPTS_CACHE_SCHEMA, 'concepts', requestedDate, {
+  await deps.cache.writeList('concepts', CONCEPTS_CACHE_SCHEMA, 'concepts-' + code, requestedDate, {
     businessDate: null,
     hitEndpoint: 'plates_by_any_stock',
     fetchedAt: fetched.fetchedAt ?? formatZonedIso(deps.now()),
@@ -239,6 +240,9 @@ export async function getConcepts(deps: DataDeps, input: ConceptsInput): Promise
     notes: [noDateNote],
   })
   const result = assemble({ plates: fetched.plates, fetchedAt: fetched.fetchedAt, notes: fetched.notes, errors: [], guard: null })
+  if (!result.available && Object.keys(fetched.plates).length === 0) {
+    result.notes.push('S8 未收录该标的（空板块集，已负缓存当日）——标签显式不可用，名称走行情源兜底')
+  }
   if (result.available) {
     await deps.cache.writeView('concepts', CONCEPTS_CACHE_SCHEMA, requestedDate, code, result, { businessDate: null, fetchedAt: result.fetchedAt ?? '' })
   }

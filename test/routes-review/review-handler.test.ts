@@ -75,12 +75,12 @@ async function postCard(handler: ReturnType<typeof createReviewHandler>, payload
 }
 
 describe('GET /review：页面 HTML（tasks 2.1/2.4）', () => {
-  it('A 层请求 → 200 text/html + Cache-Control no-cache + 页面标记 + 注入状态 writable=true', async () => {
+  it('A 层请求 → 200 text/html + Cache-Control no-store + 页面标记 + 注入状态 writable=true', async () => {
     const { deps } = makeDeps()
     const rec = await drive(createReviewHandler(deps), authedReq({ url: REVIEW_PAGE_PATH }))
     expect(rec.status).toBe(200)
     expect(rec.headers['Content-Type']).toBe('text/html; charset=utf-8')
-    expect(rec.headers['Cache-Control']).toBe('no-cache')
+    expect(rec.headers['Cache-Control']).toBe('no-store')
     expect(rec.body).toContain(REVIEW_PAGE_MARKER)
     const state = injectedReviewState(rec.body)
     expect(state.writable).toBe(true)
@@ -494,7 +494,7 @@ describe('静态资产面与直链穿越（tasks 2.4；spec「静态资产安全
     const css = await drive(handler, authedReq({ url: REVIEW_PAGE_PATH + '/assets/style.css' }))
     expect(css.status).toBe(200)
     expect(css.headers['Content-Type']).toBe('text/css')
-    expect(css.headers['Cache-Control']).toBe('no-cache')
+    expect(css.headers['Cache-Control']).toBe('no-store')
     expect(css.body).toContain('color: red')
     const exe = await drive(handler, authedReq({ url: REVIEW_PAGE_PATH + '/assets/tool.exe' }))
     expect(exe.status).toBe(404)
