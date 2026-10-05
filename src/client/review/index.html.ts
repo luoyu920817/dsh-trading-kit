@@ -35,24 +35,38 @@ export const REVIEW_HTML = `<!DOCTYPE html>
 <title>dsh-trader-kit 复盘卡片</title>
 <!-- ${REVIEW_PAGE_MARKER}: 离线自包含单文件复盘页（review-page）。无外链、无第三方资源；请求仅同源 /review/api/*。 -->
 <style>
-  * { box-sizing: border-box; }
-  body { font-family: sans-serif; margin: 8px; background: #ffffff; color: #222222; font-size: 14px; max-width: 100%; overflow-x: hidden; }
-  h1 { font-size: 16px; margin: 2px 0 8px; }
-  section { border: 1px solid #dddddd; border-radius: 4px; padding: 8px; margin: 0 0 8px; max-width: 100%; overflow-wrap: anywhere; }
-  #rv-code-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-  #rv-code { font-size: 18px; font-weight: bold; word-break: break-all; }
-  #rv-name { color: #555555; }
-  .muted { color: #777777; font-size: 12px; }
-  .warnbox { background: #fff7e0; border: 1px solid #e0c060; padding: 4px 6px; margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; }
-  input[type="date"] { padding: 4px; font-size: 14px; max-width: 100%; }
-  textarea { width: 100%; min-height: 72px; font-size: 14px; padding: 4px; resize: vertical; }
-  button { padding: 4px 10px; font-size: 14px; }
-  .card { border-top: 1px solid #eeeeee; padding: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .card-head { font-size: 12px; color: #666666; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-  a { color: #1a4d8f; overflow-wrap: anywhere; }
+  /* 暗色交易风格（owner 2026-10-05 指示：参考 同花顺涨跌停原因.html 布局——
+     黑底、暗卡、红名、代码 chip、橙色标签；兼容 Chromium 81：不用 flex gap
+     （84+），以 margin 间隔；不用 84+ 之后的任何 CSS/JS 特性。） */
+  * { font-size: 13px; margin: 0; padding: 0; box-sizing: border-box; }
+  body { background-color: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; padding: 14px; max-width: 100%; overflow-x: hidden; }
+  .rv-container { max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 15px; margin: 0 0 10px; color: #e6e6e6; font-weight: 600; }
+  section { background: #111111; border: 1px solid #333333; border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; max-width: 100%; overflow-wrap: anywhere; }
+  #rv-b1 { border-left: 4px solid #c50e29; }
+  #rv-code-line { display: flex; flex-wrap: wrap; align-items: center; }
+  #rv-code { font-size: 14px; font-weight: 600; color: #e6e6e6; background: #242424; border: 1px solid #3a3a3a; padding: 3px 9px; border-radius: 999px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; margin-right: 10px; }
+  #rv-name { color: #ff4d4f; font-size: 20px; font-weight: 700; letter-spacing: 0.5px; margin-right: 10px; }
+  .muted { color: #8a8a8a; font-size: 12px; }
+  .warnbox { background: #2a2410; border: 1px solid #7a6520; color: #e8d48a; padding: 5px 8px; margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; border-radius: 4px; }
+  .tagline { margin-top: 8px; }
+  .tag { display: inline-block; background: #333333; color: #ffa500; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 6px 4px 0; }
+  input[type="date"] { padding: 4px 6px; font-size: 13px; max-width: 100%; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; border-radius: 4px; color-scheme: dark; }
+  textarea { width: 100%; min-height: 84px; font-size: 13px; padding: 6px; resize: vertical; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; border-radius: 4px; line-height: 1.6; }
+  textarea:focus, input[type="date"]:focus { outline: none; border-color: #c50e29; }
+  button { padding: 5px 14px; font-size: 13px; background: #c50e29; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  button:disabled { background: #3a3a3a; color: #777777; cursor: not-allowed; }
+  button#rv-reserve, button.copy-btn { background: #333333; color: #ffa500; font-size: 12px; padding: 3px 8px; }
+  .card { background: #1a1a1a; border: 1px solid #333333; border-radius: 8px; padding: 8px; margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #e6e6e6; line-height: 1.6; }
+  .card-head { font-size: 12px; color: #666666; padding-bottom: 4px; border-bottom: 1px solid #262626; margin-bottom: 6px; }
+  .card-head span { margin-right: 10px; }
+  a { color: #4dabf7; overflow-wrap: anywhere; }
+  #rv-confirm-row { color: #e8d48a; font-size: 12px; margin-top: 6px; }
+  ::-webkit-scrollbar { height: 0; width: 0; }
 </style>
 </head>
 <body>
+<div class="rv-container">
 <h1>复盘卡片</h1>
 
 <section id="rv-b1">
@@ -228,7 +242,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       if (td.isTradingDay === true) el.textContent = '归属交易日 ' + td.value + '（来源 ' + td.source + '）';
       else el.textContent = '归属待确认：' + td.value + '（来源 ' + td.source + '）——保存前请勾选确认';
     } else {
-      el.textContent = '归属待确认：交易日不可得——请在 B2 显式选择日期';
+      el.textContent = '归属待确认：交易日不可得（可能为休市日/盘前）——请在 B2 显式选择最近交易日（如 2026-09-30）';
     }
     var need = needDateConfirm();
     byId('rv-confirm-row').style.display = need ? '' : 'none';
@@ -257,6 +271,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
 
   function makeCopyButton(anchor) {
     var b = document.createElement('button');
+    b.className = 'copy-btn';
     b.type = 'button';
     b.textContent = '复制引用';
     b.addEventListener('click', function () {
@@ -360,8 +375,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   function renderEnrichUnavailable(msg) {
-    byId('rv-limit').textContent = '涨停原因：不可用（' + msg + '）';
-    byId('rv-concepts').textContent = '标签：不可用（' + msg + '）';
+    byId('rv-limit').textContent = '涨停原因：不可用（' + msg + '）——可能为休市日/盘前，请在 B2 显式选择最近交易日重试';
+    byId('rv-concepts').textContent = '';
+    var none = document.createElement('span');
+    none.className = 'muted';
+    none.textContent = '标签：不可用（' + msg + '）';
+    byId('rv-concepts').appendChild(none);
   }
 
   function updateTradeStateFromEnrich(td) {
@@ -388,10 +407,26 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     }
     updateNameLine();
     var c = data.concepts;
-    if (c !== null && c !== undefined && c.available === true) {
-      byId('rv-concepts').textContent = '标签：' + (c.labels.length > 0 ? c.labels.join(' · ') : '（无概念条目）');
+    var conceptsEl = byId('rv-concepts');
+    conceptsEl.textContent = '';
+    var tagLabel = document.createElement('span');
+    tagLabel.className = 'muted';
+    tagLabel.textContent = '标签';
+    conceptsEl.appendChild(tagLabel);
+    if (c !== null && c !== undefined && c.available === true && c.labels.length > 0) {
+      for (var ti = 0; ti < c.labels.length; ti++) {
+        var chip = document.createElement('span');
+        chip.className = 'tag';
+        chip.textContent = c.labels[ti];
+        conceptsEl.appendChild(chip);
+      }
     } else {
-      byId('rv-concepts').textContent = '标签：不可用' + (c && c.detail ? '（' + c.detail + '）' : '');
+      var none = document.createElement('span');
+      none.className = 'muted';
+      none.textContent = c !== null && c !== undefined && c.available === true
+        ? '（无概念条目）'
+        : '不可用' + (c && c.detail ? '（' + c.detail + '）' : '') + '——可能为休市日，稍后自动补位';
+      conceptsEl.appendChild(none);
     }
     var lr = data.limitReason;
     if (lr !== null && lr !== undefined && lr.text) {
@@ -400,6 +435,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     } else {
       byId('rv-limit').textContent = '涨停原因：不可用（响应缺失）';
     }
+    byId('rv-limit').className = 'muted tagline';
   }
 
   function loadEnrich() {
@@ -598,6 +634,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   loadEnrich();
 })();
 </script>
+</div>
 </body>
 </html>
 `
