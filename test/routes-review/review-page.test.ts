@@ -13,7 +13,6 @@ describe('REVIEW_HTML：离线自包含（design D-2；spec「无外链」场景
   it('无任何 http(s):// 外链字面（treeid 导航在 JS 内拼接构造）', () => {
     expect(REVIEW_HTML).not.toMatch(/https?:\/\//i)
     // 拼接构造存在且不含完整 URL 字面：
-    expect(REVIEW_HTML).toContain("'://www.treeid/code_'")
     expect(REVIEW_HTML).not.toContain('http://www.treeid')
     expect(REVIEW_HTML).not.toContain('https://www.treeid')
   })
@@ -65,17 +64,20 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('frontmatter-history')
     expect(REVIEW_HTML).toContain('T2-S8')
     expect(REVIEW_HTML).toContain('id="rv-limit"')
+    expect(REVIEW_HTML).toContain('涨停原因（点击展开）') // 默认收起可展开（owner 2026-10-05）
     expect(REVIEW_HTML).toContain('id="rv-concepts"')
-    expect(REVIEW_HTML).toContain('id="rv-treeid"')
-    expect(REVIEW_HTML).toContain('在 TDX 中打开标的')
+    // owner 2026-10-05：treeid 链接移除（页面本身在 TDX 内，无需联动按钮）。
+    expect(REVIEW_HTML).not.toContain('id="rv-treeid"')
+    expect(REVIEW_HTML).not.toContain('在 TDX 中打开标的')
   })
 
   it('B2：日期输入 + 待确认态 + 保存前显式确认（checkbox）', () => {
     expect(REVIEW_HTML).toContain('id="rv-date"')
     expect(REVIEW_HTML).toContain('id="rv-trade-state"')
     expect(REVIEW_HTML).toContain('归属待确认')
-    expect(REVIEW_HTML).toContain('id="rv-confirm-date"')
-    expect(REVIEW_HTML).toContain('确认归属该交易日')
+    // owner 2026-10-05：确认勾选框移除——预填最近期交易日，保存即显式提交。
+    expect(REVIEW_HTML).not.toContain('id="rv-confirm-date"')
+    expect(REVIEW_HTML).not.toContain('确认归属该交易日')
   })
 
   it('B3：输入 + 保存 + Ctrl+Enter + isComposing 忽略 + 提交中防重文案 + 预留区 disabled+tabindex=-1', () => {

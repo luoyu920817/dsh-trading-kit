@@ -115,7 +115,7 @@
 
 ### Requirement: 名称三级兜底的分层归属
 
-B1 SHALL 显示标的代码，名称 SHALL 按三层兜底获取，且**层号 = 兜底优先级、每层接口归属唯一**（`iteration-1-contracts §12.4`）：① 该标的历史卡片文档 frontmatter 的 `name`（零网络，归 `/api/local`）；② 数据工具名称反查（best-effort，归 `/api/enrich`，入参含 `code`）：**先 T2/S8 反查（`nameSource: 'T2-S8'`），未命中再行情名称源探针（同花顺 realhead，`nameSource: 'quote-ths'`；owner 指示 2026-10-05「名称必须显示」——S8 反查仅覆盖板块前 N 权重股，非权重股需行情源兜底）**；③ 仅显示代码（归 `/api/local`）。
+B1 SHALL 显示标的代码与名称（三层兜底）；**页面不展示名称来源标注**（来源保留在 API 响应 `nameSource`；owner 2026-10-05 指示简化显示）；**页面内不提供「在 TDX 中打开标的」跳转链接**（页面本身运行于 TDX 内——owner 2026-10-05 指示移除；spike 决策①的 treeid 通道保留备用），且**层号 = 兜底优先级、每层接口归属唯一**（`iteration-1-contracts §12.4`）：① 该标的历史卡片文档 frontmatter 的 `name`（零网络，归 `/api/local`）；② 数据工具名称反查（best-effort，归 `/api/enrich`，入参含 `code`）：**先 T2/S8 反查（`nameSource: 'T2-S8'`），未命中再行情名称源探针（同花顺 realhead，`nameSource: 'quote-ths'`；owner 指示 2026-10-05「名称必须显示」——S8 反查仅覆盖板块前 N 权重股，非权重股需行情源兜底）**；③ 仅显示代码（归 `/api/local`）。
 
 - `/api/local` MUST NOT 执行网络反查，其名称取值域只有 ① 与 ③，并 SHALL 返回 `nameSource: 'frontmatter-history' | 'code-only'`。
 - `/api/enrich` SHALL 返回层②的 `name` 与 `nameSource: 'T2-S8'`；页面在本地段为 `code-only` 时用层②**补位替换**并更新来源标注；本地段已命中层①时 MUST NOT 被网络段覆盖。

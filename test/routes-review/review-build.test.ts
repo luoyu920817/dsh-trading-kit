@@ -41,7 +41,7 @@ describe('构建产物（tasks 7.1：内联资产随包发布）', () => {
   it('lib/** 的复盘页文本与 src 常量同源（内联定案①：无拷贝漂移）', () => {
     const files = libJsFiles()
     const contents = files.map((rel) => readFileSync(join(LIB_DIR, rel), 'utf8'))
-    const excerpt = REVIEW_HTML.split('\n').filter((l) => l.includes('rv-treeid'))[0] ?? ''
+    const excerpt = REVIEW_HTML.split('\n').filter((l) => l.includes('rv-limit'))[0] ?? ''
     expect(excerpt).not.toBe('')
     expect(contents.some((text) => text.includes(excerpt.trim()))).toBe(true)
   })

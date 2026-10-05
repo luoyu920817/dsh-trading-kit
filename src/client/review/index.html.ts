@@ -6,8 +6,8 @@
  * 语法上限（spike 实测内核 = Chromium 81 级，docs/spikes/tdx-embed.md）：ES2017 +
  * Fetch + Promise 的保守子集——内联脚本 MUST NOT 使用 ES module / 可选链（?.）/
  * 空值合并（??）/ 模板字符串 / async / await；用 var/function/then 链。
- * 离线自包含：无任何 http(s):// 外链字面（「在 TDX 中打开标的」的 treeid 导航在
- * JS 内以拼接构造——'http' + '://www.treeid/code_<代码>'，spike 决策第 1 条）；
+ * 离线自包含：无任何 http(s):// 外链字面（owner 2026-10-05：treeid 联动按钮移除——
+ * 页面本身运行在 TDX 内；spike 决策①通道保留备用）；
  * 网络请求仅同源 /review/api/*（本地段与网络段独立 fetch，首屏 MUST NOT await 网络段）。
  *
  * 服务端注入（D-3）：`__REVIEW_STATE_JSON__` 占位符由 src/routes/review.ts 的
@@ -61,7 +61,7 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   .card-head { font-size: 12px; color: #666666; padding-bottom: 4px; border-bottom: 1px solid #262626; margin-bottom: 6px; }
   .card-head span { margin-right: 10px; }
   a { color: #4dabf7; overflow-wrap: anywhere; }
-  #rv-confirm-row { color: #e8d48a; font-size: 12px; margin-top: 6px; }
+  .limit-body { color: #cccccc; line-height: 1.6; margin-top: 6px; }
   ::-webkit-scrollbar { height: 0; width: 0; }
 </style>
 </head>
@@ -73,7 +73,6 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   <div id="rv-code-line">
     <span id="rv-code">—</span>
     <span id="rv-name" class="muted"></span>
-    <a id="rv-treeid" href="#" tabindex="-1" style="display:none">在 TDX 中打开标的</a>
   </div>
   <div id="rv-concepts" class="muted"></div>
   <div id="rv-limit" class="muted"></div>
@@ -85,9 +84,6 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   <label for="rv-date">交易日</label>
   <input type="date" id="rv-date" value="">
   <span id="rv-trade-state" class="muted"></span>
-  <label id="rv-confirm-row" for="rv-confirm-date" style="display:none">
-    <input type="checkbox" id="rv-confirm-date"> 确认归属该交易日（待确认态，保存前须勾选）
-  </label>
 </section>
 
 <section id="rv-b3">
@@ -175,19 +171,16 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   function updateNameLine() {
     var el = byId('rv-name');
     var effective = null;
-    var sourceText = '';
     if (nameLocal !== null && nameLocal.value !== null && nameLocal.value !== '') {
       // 层①命中：网络段（层②）MUST NOT 覆盖（§12.4）。
       effective = nameLocal.value;
-      sourceText = nameLocal.nameSource === 'frontmatter-history' ? '本地历史 frontmatter' : '仅代码';
     } else if (enrichName !== null && enrichName.name) {
-      // 层②补位：仅当本地段为 code-only。
+      // 层②补位：仅当本地段为 code-only。来源标注（T2-S8 等）保留在 API 响应，
+      // 页面不展示（owner 2026-10-05：「这是什么」——简化显示）。
       effective = enrichName.name;
-      sourceText = enrichName.source;
     }
     if (currentCode === null) { el.textContent = ''; return; }
-    if (effective !== null) el.textContent = effective + '（' + sourceText + '）';
-    else el.textContent = '名称未获取';
+    el.textContent = effective !== null ? effective : '名称未获取';
   }
 
   function renderB1() {
@@ -195,15 +188,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (currentCode !== null) codeEl.textContent = currentCode;
     else if (currentRaw !== null && currentRaw !== '') codeEl.textContent = '收到「' + currentRaw + '」';
     else codeEl.textContent = '—';
-    var link = byId('rv-treeid');
-    if (currentCode !== null) {
-      // 正向联动通道（spike 决策①）：treeid 导航；URL 以拼接构造，模板零外链字面。
-      link.style.display = '';
-      link.setAttribute('href', 'http' + '://www.treeid/code_' + currentCode);
-    } else {
-      link.style.display = 'none';
-      link.setAttribute('href', '#');
-    }
+    // owner 2026-10-05：页面本身运行在 TDX 内，跳转 TDX 的联动链接移除
+    //（spike 决策①的 treeid 通道保留在文档与后续场景：页面外联动时再启用）。
     byId('rv-concepts').textContent = '';
     byId('rv-limit').textContent = '';
     updateNameLine();
@@ -225,16 +211,9 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   // ── B2 渲染 ─────────────────────────────────────────────────────────────
-  function needDateConfirm() {
-    if (datePicked) return false; // 用户显式选择日期 = 一次显式确认
-    var td = lastLocal !== null ? lastLocal.tradeDate : null;
-    if (td === null || td === undefined || td.value === null || td.isTradingDay !== true) return true;
-    return false;
-  }
-
   function renderTradeState() {
     var el = byId('rv-trade-state');
-    if (currentCode === null) { el.textContent = ''; byId('rv-confirm-row').style.display = 'none'; return; }
+    if (currentCode === null) { el.textContent = ''; return; }
     var td = lastLocal !== null ? lastLocal.tradeDate : null;
     if (lastLocal !== null && lastLocal.dateSource === 'requested' && lastLocal.date) {
       el.textContent = '查看日期：' + lastLocal.date;
@@ -244,9 +223,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     } else {
       el.textContent = '归属待确认：交易日不可得（可能为休市日/盘前）——请在 B2 显式选择最近交易日（如 2026-09-30）';
     }
-    var need = needDateConfirm();
-    byId('rv-confirm-row').style.display = need ? '' : 'none';
-    if (!need) byId('rv-confirm-date').checked = false;
+    // owner 2026-10-05：确认勾选框移除——页面预填 T0 解析出的最近期交易日，
+    // 保存即显式提交该日期（归属证据 = 数据源会话集合比对，非系统日历猜测）。
   }
 
   // ── B4 渲染（时间倒序 + 纯文本转义 + 复制 block 引用）───────────────────
@@ -391,6 +369,31 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     }
   }
 
+  /** 涨停原因折叠盒（owner 2026-10-05：默认收起，点击展开/收起）。 */
+  function renderLimitBox(lr) {
+    var box = byId('rv-limit');
+    box.textContent = '';
+    var head = document.createElement('div');
+    head.style.cursor = 'pointer';
+    var body = document.createElement('div');
+    body.className = 'limit-body';
+    if (lr === null || lr === undefined || !lr.text) {
+      head.textContent = '涨停原因：不可用（响应缺失）';
+      box.appendChild(head);
+      return;
+    }
+    head.textContent = '涨停原因（点击展开）▾ ' + (lr.businessDate ? '［' + lr.businessDate + '］' : '');
+    body.textContent = lr.text;
+    body.style.display = 'none';
+    head.addEventListener('click', function () {
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : '';
+      head.textContent = '涨停原因（点击' + (open ? '展开' : '收起') + '）' + (open ? '▾' : '▴') + (lr.businessDate ? '［' + lr.businessDate + '］' : '');
+    });
+    box.appendChild(head);
+    box.appendChild(body);
+  }
+
   function renderEnrich(data) {
     // B2 默认归属日补位（仅当用户未显式选日）。
     if (!datePicked && data.tradeDate !== null && data.tradeDate !== undefined && data.tradeDate.value !== null && byId('rv-date').value === '') {
@@ -429,13 +432,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       conceptsEl.appendChild(none);
     }
     var lr = data.limitReason;
-    if (lr !== null && lr !== undefined && lr.text) {
-      // 分档文案由服务端 availability 驱动（含「按源业务日 <日期>」标注）。
-      byId('rv-limit').textContent = '涨停原因：' + lr.text;
-    } else {
-      byId('rv-limit').textContent = '涨停原因：不可用（响应缺失）';
-    }
-    byId('rv-limit').className = 'muted tagline';
+    renderLimitBox(lr !== null && lr !== undefined ? lr : { text: null });
   }
 
   function loadEnrich() {
@@ -481,7 +478,6 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     datePicked = false;
     currentDate = null;
     byId('rv-date').value = '';
-    byId('rv-confirm-date').checked = false;
     byId('rv-warnings').textContent = '';
     setMode('idle');
     loadLocal(false);
@@ -526,10 +522,6 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (trim(text) === '') { setMode('error', '内容为空——请先输入'); return; }
     if (pendingOwner !== null) {
       setMode('error', '未提交内容属于 ' + pendingOwner.from + '——请先点击「确认归属到 ' + pendingOwner.to + '」再保存');
-      return;
-    }
-    if (needDateConfirm() && !byId('rv-confirm-date').checked) {
-      setMode('error', '归属待确认——请先勾选「确认归属该交易日」再保存');
       return;
     }
     if (pendingRequestId === null) pendingRequestId = newRequestId();
@@ -603,9 +595,6 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (pendingOwner === null) hideOwnerConfirm();
     loadLocal(false);
   });
-  byId('rv-confirm-date').addEventListener('change', function () {
-    if (byId('rv-confirm-date').checked && mode === 'error') setMode('idle');
-  });
   byId('rv-confirm-owner').addEventListener('click', function () {
     // 一次显式确认：归属切到新标的；确认后保存即可提交（服务端仍按 clientRequestId 幂等）。
     pendingOwner = null;
@@ -614,10 +603,10 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   });
   window.addEventListener('hashchange', applyParams);
 
-  // writable=false（C 层签字只读分支）：B3 降级为禁用态 + 提示 DSH 侧写卡。
+  // writable=false（A 层未生效）：仅保存禁用；输入框保持可编辑（草稿保留，
+  // owner 2026-10-05 反馈「输入框无法点击进入」——TDX 免登录读态下仍可先写）。
   if (!writable) {
     byId('rv-save').disabled = true;
-    inputEl.disabled = true;
     byId('rv-readonly-hint').style.display = '';
   }
 
