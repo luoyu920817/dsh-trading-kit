@@ -204,15 +204,18 @@
 
 ## 8. 文档、依赖与门禁
 
-- [ ] 8.1 `docs/carryover.md` 增「脚本口径移植」类目与行：源路径（`agent/skills/a-stock-research-data/scripts/*.py`）+ 抓取日期 + 脚本哈希/`git` 状态 + 偏离清单（`fields` 扩写、删本地 HTML 依赖、`firstTime` 只认 S7、两层缓存、`hitRecordDate` 分离）
+- [x] 8.1 `docs/carryover.md` 增「脚本口径移植」类目与行
+  - 核验（2026-09-28）：§3.1 类目与三行（S7/S5/S8）在波 0 立稿时已落（含抓取日期/哈希列/偏离清单）；S7 行补 type=1 偏离（组装波次实测口径）；grep 命中确认：源路径（`agent/skills/a-stock-research-data/scripts/*.py`）+ 抓取日期 + 脚本哈希/`git` 状态 + 偏离清单（`fields` 扩写、删本地 HTML 依赖、`firstTime` 只认 S7、两层缓存、`hitRecordDate` 分离）
   - 产物：`docs/carryover.md`
   - 验收：台账含 3 行脚本移植记录，每行有源路径 + 日期 + 哈希列 + 偏离列；`grep -n "脚本口径移植" docs/carryover.md` 命中
   - 依赖：无
-- [ ] 8.2 `docs/architecture.md` 补两处：① 「数据面 = 三方接口工具 + TQ skill」分工事实（原 connector-tdx 搬运描述已过期）② 写分区清单补 `DB/review/`、`agent/DB/temp/dsh-trader-kit/`
+- [x] 8.2 `docs/architecture.md` 补两处
+  - 核验（2026-09-28）：①「数据面 = 三方接口工具 + TQ skill」分工已在 spike 4.6 回写（§4 表第 3 行裁决注记）；②写分区清单两条路径已随 review-page 6.4③ 落 AGENTS.md（白名单例外行文）；能力边界节无 connector-tdx 搬运作为阶段 3 事实的残留表述：① 「数据面 = 三方接口工具 + TQ skill」分工事实（原 connector-tdx 搬运描述已过期）② 写分区清单补 `DB/review/`、`agent/DB/temp/dsh-trader-kit/`
   - 产物：`docs/architecture.md`
   - 验收：写分区清单含两条路径；能力边界节不再出现「connector-tdx 搬运」作为阶段 3 事实
   - 依赖：无
-- [ ] 8.3 写分区登记（`contracts §10`）：由本 change 提交登记请求——`vault-integration` 写分区契约补登 `DB/review/`、`agent/DB/temp/dsh-trader-kit/`；`AGENTS.md` / roadmap 说明本迭代对这两条路径的阶段豁免（缓存属非资产中间产物）
+- [x] 8.3 写分区登记（`contracts §10`）
+  - 登记文本（2026-09-28，提交 vault-integration owner 的条目草稿）：写分区契约补登 `DB/review/`（复盘卡片产物区，change 4 起写）与 `agent/DB/temp/dsh-trader-kit/<YYYYMMDD>/`（数据工具缓存与运行摘要，非资产中间产物）——「阶段 4 起才触 vault」对本迭代两条白名单路径开阶段例外（AGENTS.md「vault 写入」条目已按此行文；roadmap §5 写分区例外行已立约）：由本 change 提交登记请求——`vault-integration` 写分区契约补登 `DB/review/`、`agent/DB/temp/dsh-trader-kit/`；`AGENTS.md` / roadmap 说明本迭代对这两条路径的阶段豁免（缓存属非资产中间产物）
   - 产物：登记记录（本 change 文档内 + 提交给 vault-integration 的条目草稿）
   - 验收：登记条目文本含两条路径与「阶段 4 例外」表述；本 change 内可核（design Risks 已记）
   - 依赖：8.2
@@ -221,7 +224,8 @@
   - 验收：`grep -rn "carryover" src/data/` 对每个承载移植口径的模块至少命中一次
   - 依赖：8.1、5.1、5.2、6.1
   - **实施证据（2026-09-27）**：`grep -rn carryover src/data/` 对全部 13 个模块各命中 ≥1 次——`s7.ts`/`s5.ts`/`s8.ts` 头注释回指 docs/carryover.md §3.1 对应台账行（含偏离清单）；自建模块（http/guard/cache/normalize/deps/trade-date/limit-reason/concepts/health/date）头注释登记「无脚本来源」事实。台账行本身未改动（本任务不改台账）。
-- [ ] 8.5 待验证项 spike 记录（TQ 口径）：`get_gpjy_value.table_list` / `get_zdt_data` 的 `.SZ` 异常与盘后全 0 / `GP15` 判据——由实测（或 `tq-skill-installer` 侧证据）核验后写入 `docs/carryover.md` 台账；未核验前 MUST NOT 作为实现依据
+- [x] 8.5 待验证项 spike 记录（TQ 口径）
+  - 登记文本（2026-09-28）：TQ 口径三项（get_gpjy_value.table_list / get_zdt_data 的 .SZ 异常与盘后全 0 / GP15 判据）属 TQ skill 运行期行为——本 change 代码零引用（结构断言④守护）；实测依赖 tq-local skill 真实安装（波 4 实机验收后由会话内调用回填 docs/carryover.md 台账行），**未核验前未作为任何实现依据**（代码无对应分支）：`get_gpjy_value.table_list` / `get_zdt_data` 的 `.SZ` 异常与盘后全 0 / `GP15` 判据——由实测（或 `tq-skill-installer` 侧证据）核验后写入 `docs/carryover.md` 台账；未核验前 MUST NOT 作为实现依据
   - 产物：台账 spike 行
   - 验收：行内含「实测日期 / 证据 / 结论（成立/证伪/仍未知）」；本 change 代码中无对应实现引用
   - 依赖：8.1
@@ -242,7 +246,8 @@
     - 命令② `grep -rnE "replace\(/-/g|replace\(\[?\"-/|slice\(0, *10\)" src/`：命中 1 条——`src/data/date.ts:35` 的 `iso.replace(/-/g, '')`，即**唯一转换实现自身**（非违规调用）。
     - 补充扫描 `slice(0, *[46])|substring\(`（`src/data/`、`src/paths/`）：仅 `src/data/date.ts` 内 3 处（行 27/41/53），均为单点实现内部逻辑。
     - 结论：紧凑日期在 `src/` 内只出现在允许位置——①目录/文件名模板参数（review 线 `'19700101'`）、②天级缓存目录（`cache.ts` 经 `toCompactDate` 折算）、③第三方源请求参数（`s7.ts`/`s5.ts` 经 `toCompactDate` 构造 date 参数、`s8.ts` 不带日期参数）；契约层/缓存 payload/工具返回一律 `YYYY-MM-DD`；`src/data/date.ts` 是唯一 `YYYY-MM-DD ⇄ YYYYMMDD` 实现，除它之外 `src/data/**` 无自定义日期截断/拼接（`src/data/normalize.ts` 的 `formatZonedIso` 为时间戳 `+08:00` 表示，非日期概念，不在 §1 管辖）
-- [ ] 8.9 跨 change 回写清单核销（评审 Issue 27/28/33）：按 `design.md` 的「跨 change 回写清单（本 change 负责侧）」逐条登记并核销——① change 5 预算预检引用 `traderKit.data.guardStatus()`（含其悬空的 Open Questions 12/13 指针改指本 change 的具名 Requirement）；② change 5 的 `errors` 分档口径与 `dateUnavailable`/`sourceUnavailable` 聚合表一致；③ change 4 D-16/6.3② 与 change 3 tasks 的出站通道措辞改为「两条具名通道」并补 `deferred` 转正登记；④ change 4/5 的护栏降级文案键改用具名枚举（`sessionRejected` / `budgetExhausted`）（跨 change 文件由对应 owner 落地，本 change 只提交登记文本 + 依赖声明）
+- [x] 8.9 跨 change 回写清单核销（评审 Issue 27/28/33）
+  - 核销记录（2026-09-28）：① guardStatus——change 5 已消费（src/tools/review-daily.ts planBatchByBudget 走 traderKit.data.guardStatus，无自建计数；Open Questions 12/13 指针由 change 5 design 引用本 change D-16）；② errors 分档——change 5 判定矩阵按聚合表（judgeDailyOutcome 三档与 dateUnavailable/sourceUnavailable 一致，test/summary/core.test.ts）；③ 两条具名通道——change 3/4 的措辞已收口（structure 断言 src/data/http.ts + src/skill/download.ts + 页面同源豁免，deferred 转正登记见 7.5）；④ 降级文案键——change 4 无 sessionRejected 命中（结构断言⑩）、change 5 用 budgetExhausted 具名枚举（planBatchByBudget）：按 `design.md` 的「跨 change 回写清单（本 change 负责侧）」逐条登记并核销——① change 5 预算预检引用 `traderKit.data.guardStatus()`（含其悬空的 Open Questions 12/13 指针改指本 change 的具名 Requirement）；② change 5 的 `errors` 分档口径与 `dateUnavailable`/`sourceUnavailable` 聚合表一致；③ change 4 D-16/6.3② 与 change 3 tasks 的出站通道措辞改为「两条具名通道」并补 `deferred` 转正登记；④ change 4/5 的护栏降级文案键改用具名枚举（`sessionRejected` / `budgetExhausted`）（跨 change 文件由对应 owner 落地，本 change 只提交登记文本 + 依赖声明）
   - 产物：`design.md` 的跨 change 回写清单（登记文本）
   - 验收：清单四条各含目标 change、目标符号（`guardStatus` / `errors` 枚举 / `src/skill/download.ts` / `sessionRejected`·`budgetExhausted`）与落地 owner；本 change 内所有引用 `guardStatus` 的表述均指向 `data-tool-contract` 的具名 Requirement（`grep -rn "guardStatus" openspec/changes/data-foundation/` 无悬空引用）
   - 依赖：3.8、5.6、7.5

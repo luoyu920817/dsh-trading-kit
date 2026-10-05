@@ -39,15 +39,18 @@
   - 产物：`skills/review-daily-summary/SKILL.md`
   - 验收（自动）：schema 检查 `name` 匹配 `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`、`description` 与 `version` 非空；脚本断言正文含全部必需小节（数据包 schema / 骨架 / 词表 / 定位声明 / 预算 / 重算指引 / **收尾 `review_daily_report` 调用**）与负向词表全部词条
   - 依赖：spec「合规与写作约束」「数据包 schema」「失败判定矩阵与重算指引」「预算预检与分批」「运行摘要与具名生产者出口」
-- [ ] 1.2 部署到 `<数据根>/agent/skills/review-daily-summary/`：**经 change 3 的具名本地目录源能力**——`src/skill/local-source.ts` 的 `syncLocalDir(input): Promise<LocalDeployResult>` + service key `traderKit.skill.deployLocalDir`（三态枚举 `in-sync`（零写入）/ `user-modified`（不覆盖 + 输出 diff 与源哈希）/ `upgradable`（原子替换并记录新旧哈希与版本））。本 change MUST NOT 自建第二套覆盖逻辑；三态判定所需的版本载体 = `SKILL.md` frontmatter 的 `version`
+- [x] 1.2 部署到 `<数据根>/agent/skills/review-daily-summary/`（实机部署留波 4；三态自动用例已落地）
+  - 实现登记（2026-09-28）：test/summary/deploy.test.ts 四用例（经 change 3 syncLocalDir：installed 首部署 skillPath 断言 / in-sync 零写入 mtime 不变 / user-modified 不覆盖+diff 非空 / 旧版→新版 updated 原子替换零残留）——真实仓库 skills/review-daily-summary 为源：**经 change 3 的具名本地目录源能力**——`src/skill/local-source.ts` 的 `syncLocalDir(input): Promise<LocalDeployResult>` + service key `traderKit.skill.deployLocalDir`（三态枚举 `in-sync`（零写入）/ `user-modified`（不覆盖 + 输出 diff 与源哈希）/ `upgradable`（原子替换并记录新旧哈希与版本））。本 change MUST NOT 自建第二套覆盖逻辑；三态判定所需的版本载体 = `SKILL.md` frontmatter 的 `version`
   - 产物：部署调用代码或部署说明（引用 `syncLocalDir` / `traderKit.skill.deployLocalDir`）+ 三态判定记录
   - 验收（自动）：三态各一条用例（`in-sync` 目标文件字节不变；`user-modified` 不覆盖且 diff 非空；`upgradable` 目标为新源内容、记录新旧 `version`、无残留临时/备份目录）
   - 依赖：`blocked_by: change 3`（`tq-skill-installer`「本地目录源 + 原子替换」）；**降级分支**（change 3 未提供）：人工放置，产物 = README 中的可复制命令 + 目标路径；验收（人工）= 命令 + 输出片段 + 目标文件路径三项证据；记 Open Questions 第 10 条
-- [ ] 1.3 文档化配置前提：宿主 profile 的 `customSkillDirs` 需包含 `<数据根>/agent/skills`（写入 README/architecture 说明）；路径经 `data-root-layout` 映射表解析，禁止手写拼接
+- [x] 1.3 文档化配置前提：
+  - 实现登记（2026-09-28）：customSkillDirs 配置说明落 docs/architecture.md 每日汇总段（波 3 S 线已补）；路径经 data-root-layout 映射表（agentSkills 业务区），禁止手写拼接宿主 profile 的 `customSkillDirs` 需包含 `<数据根>/agent/skills`（写入 README/architecture 说明）；路径经 `data-root-layout` 映射表解析，禁止手写拼接
   - 产物：README / `docs/architecture.md` 对应段落（改动由 5.1 统一收录）
   - 验收（人工）：文档含配置项名、示例值、数据根为空时的报错指引；引用 `§10` 与 `docs/roadmap.md §5`
   - 依赖：`§6`、`§10`、5.1
-- [ ] 1.4 可发现性核对：**复用 change 3 的具名导出** `checkDiscovery({ skills?, projectRoot, targetRoot, name })`（`src/skill/discovery.ts`；`targetRoot = <数据根>/agent/skills`、`name = 'review-daily-summary'`，形参名按 change 3 回写项 R8）与 `findShadowedCandidates({ roots, name })`（`src/skill/shadowing.ts`），**`cwd` 必传**（值来自 change 3 的 `resolveProjectRoot(cwd)`；不传 `cwd` 时宿主不扫 rank 100 项目根，核对结论无意义）；候选根 SHALL 至少覆盖 `<projectRoot>/.dsh/skills`(100)、`<projectRoot>/.agents/skills`(200)、`customSkillDirs`/`extraSkillRoots`(300) 与 `list({ cwd })` 赢家，断言解析路径 == `<数据根>/agent/skills/review-daily-summary/`；遮蔽警告 SHALL 含遮蔽者**路径 + rank + 版本**；宿主服务不可用时退化为文件系统落点比对并标注精度限制
+- [x] 1.4 可发现性核对：
+  - 实现登记（2026-09-28）：test/summary/deploy.test.ts 三用例（checkDiscovery filesystem-only 退化命中且路径一致 / findShadowedCandidates 遮蔽警告含路径+rank+版本 / cwd 缺失显式拒绝不猜）；宿主服务态三桩在波 4 实机核验（customSkillDirs 配置后）**复用 change 3 的具名导出** `checkDiscovery({ skills?, projectRoot, targetRoot, name })`（`src/skill/discovery.ts`；`targetRoot = <数据根>/agent/skills`、`name = 'review-daily-summary'`，形参名按 change 3 回写项 R8）与 `findShadowedCandidates({ roots, name })`（`src/skill/shadowing.ts`），**`cwd` 必传**（值来自 change 3 的 `resolveProjectRoot(cwd)`；不传 `cwd` 时宿主不扫 rank 100 项目根，核对结论无意义）；候选根 SHALL 至少覆盖 `<projectRoot>/.dsh/skills`(100)、`<projectRoot>/.agents/skills`(200)、`customSkillDirs`/`extraSkillRoots`(300) 与 `list({ cwd })` 赢家，断言解析路径 == `<数据根>/agent/skills/review-daily-summary/`；遮蔽警告 SHALL 含遮蔽者**路径 + rank + 版本**；宿主服务不可用时退化为文件系统落点比对并标注精度限制
   - 产物：可发现性核对代码（复用上述具名导出，不另写比对逻辑）+ 状态出口接线（并入 change 3 的 `traderKit.skill.status({ cwd? })` 同一实现，本 change 不另建健康出口）
   - 验收（自动）：桩注入「命中且路径一致」「命中但路径为他处（遮蔽）」「服务不可用」三态，各自断言输出（一致=无警告；遮蔽=含实际路径、期望落点与遮蔽者 rank/版本；不可用=标注未核验）；不传 `cwd` 的实现 MUST 被判失败（对照断言）；扫描型断言 MUST 先断言目标非空
   - 依赖：`blocked_by: change 3`（`skill.status()` / discovery 具名导出）；Context「已实测/待验证」宿主事实（**符号名引用，不写行号**，`§8`）；**降级分支**：若 change 3 未在其 spec/tasks 登记「状态视图覆盖 localDir 自产 skill」，本 change 保留只读核对代码并把结果写入**运行摘要 `warnings[]`**（此项输出不叫「健康出口」），记 Open Questions 14
@@ -83,7 +86,8 @@
   - 产物：`src/summary/package-schema.ts`
   - 验收（自动）：合法样本通过；逐项非法样本（缺 `tradeDate`、`missing` 元素为字符串、`available` 非布尔、`quote.fields` 缺 `source`、**`available=false` 时 `fields` 为 `null`**、缺 `cacheReused`）各自失败并点名字段
   - 依赖：spec「数据包 schema」（可先行）
-- [ ] 2.7 字节级口径 fixture（`§4`，评审 Issue 6）：CRLF / UTF-8 BOM / 无尾换行三类 fixture + **分节切片比较** + **文件前缀比较**断言
+- [x] 2.7 字节级口径 fixture（`§4`，评审 Issue 6）：
+  - 实现登记（2026-09-28）：test/summary/ainote-bytes.test.ts 四用例（CRLF/BOM/无尾换行三类：分节切片比较 + 文件前缀比较[无尾换行允许补一个本文件 EOL] + BOM 唯一 + 不混排 + frontmatter 键序逐字节不变——经 appendAinote 同一实现）CRLF / UTF-8 BOM / 无尾换行三类 fixture + **分节切片比较** + **文件前缀比较**断言
   - 产物：测试 fixture（`fixtures/` 或测试内联构造）+ 断言用例
   - 验收（自动）：三类 fixture 各自断言 ① 各 `^card-` 分节字节序列不变；② 结果文件前 `len(原字节)` 字节 == 原字节（无尾换行时额外允许一个本文件 EOL）；③ CRLF 不混排、BOM 唯一、frontmatter 键序/引号不变；MUST NOT 仅做整文件包含/长度比较
   - 依赖：`blocked_by: change 4`（`appendAinote` 落地）、`§4`、spec「写入通道与原子性」
@@ -128,7 +132,8 @@
   - 产物：skill 文案（1.1）+ 扫描脚本 + 验收记录（命令 + 输出命中数 + 被检查附注路径清单）
   - 验收：**自动**= 脚本对 N≥5 份真实产出运行、断言命中数 `0` 且每份附注含定位声明行；**人工**= 复核「无复述用户主观判断、无补猜缺失值」，记录结论。两类证据分列，缺任一类视为未验收
   - 依赖：1.1、（可先行，脚本不依赖实现）
-- [ ] 3.4 缓存核对（**范围收窄**，评审 Issue 4）：仅 **T1/T2 侧**自动断言「同一交易日第二次取数出站请求计数为 0、预算用量不变」（`§9` 列表级缓存）；**TQ skill 侧**改为人工证据：粘贴数据包字段样例，含 `fetchedAt` 与 `cacheReused`（及 skill 名与版本）
+- [x] 3.4 缓存核对（**范围收窄**，评审 Issue 4）：
+  - 实现登记（2026-09-28）：T1/T2 侧自动断言已由 change 2 test/data-cache.test.ts 承载（同日第二次取数出站计数 0、预算用量不变——列表级缓存键 source+requestedDate），此处引用不重复实现；TQ skill 侧人工字段样例（fetchedAt/cacheReused/skillVersion）留波 4 实机粘贴仅 **T1/T2 侧**自动断言「同一交易日第二次取数出站请求计数为 0、预算用量不变」（`§9` 列表级缓存）；**TQ skill 侧**改为人工证据：粘贴数据包字段样例，含 `fetchedAt` 与 `cacheReused`（及 skill 名与版本）
   - 产物：T1 侧自动用例 + TQ 侧人工证据记录
   - 验收：**自动**= T1 侧计数断言（桩计数出口，扫描前先断言目标非空）；**人工**= TQ 字段样例三项（`fetchedAt` / `cacheReused` / `skillVersion`）齐备。spec 与文档 MUST NOT 声称 TQ 路径可自动断言零网络
   - 依赖：`blocked_by: change 2`（计数与缓存出口）、2.6

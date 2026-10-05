@@ -133,15 +133,18 @@
 
 ## 3. 交易日归属与降级（承载无关层）
 
-- [ ] 3.1 `TradeDateResolver` seam：默认实现返回 `{ value, source, isTradingDay: true|null, confidence, marketSuffix? }`，MUST 调用 change 2 的 `traderKit.data.resolveTradeDate({ date? })`，MUST NOT 自行实现日期推断或系统日期 fallback
+- [x] 3.1 `TradeDateResolver` seam
+  - 实现登记（2026-09-28）：`src/review/context.ts` createTradeDateResolver（默认包装器调 change 2 T0）+ routes 装配接线（src/routes/review.ts deps.resolveTradeDate = createTradeDateResolver(data.resolveTradeDate).resolve）；三返回形状桩测试在 test/review/context.test.ts（value/isTradingDay/confidence/marketSuffix）：默认实现返回 `{ value, source, isTradingDay: true|null, confidence, marketSuffix? }`，MUST 调用 change 2 的 `traderKit.data.resolveTradeDate({ date? })`，MUST NOT 自行实现日期推断或系统日期 fallback
   - 产物：`src/review/context.ts` 的 `TradeDateResolver` 默认实现
   - 验收：`value===null` 或 `isTradingDay===null` → 归属待确认；`isTradingDay===true` 才可直接归属；单测注入桩覆盖三种返回
   - 依赖：`§1`、1.5、change 2 T0 能力
-- [ ] 3.1b **B 选项最小 stub + 契约测试**：实现一个不接线、不调用 TQ 的 stub（返回 `source: 'TQ-HqDate'` + `marketSuffix`），用契约测试断言「替换 seam 实现后页面/存储层零改动」
+- [x] 3.1b **B 选项最小 stub + 契约测试**
+  - 实现登记（2026-09-28）：createTqStubTradeDateResolver（source:TQ-HqDate+marketSuffix 按代码段推导）；契约测试「同一调用方在默认包装器与 stub 间替换零改动」+ 结构断言「生产注册路径不含 stub」（test/review/context.test.ts）：实现一个不接线、不调用 TQ 的 stub（返回 `source: 'TQ-HqDate'` + `marketSuffix`），用契约测试断言「替换 seam 实现后页面/存储层零改动」
   - 产物：stub 实现 + 契约测试用例
   - 验收：契约测试断言返回值形状与调用方无感知；stub MUST NOT 出现在生产注册路径
   - 依赖：3.1、D-TQ 台账（`docs/roadmap.md §5`）
-- [ ] 3.2 归属确认：B2 显示待确认归属（含来源与 confidence），提交前一次显式确认；确认前 MUST NOT 落盘；**默认值分路径**：`isTradingDay === null` 且 `value !== null` → 默认 = `value`；`value === null` → 默认留空并 MUST 要求用户显式填入（可预填 `requestedDate` 但标注「待确认」，MUST NOT 当作归属）
+- [x] 3.2 归属确认：
+  - 实现登记（2026-09-28）：写路径归属待确认 → 409 TRADE_DATE_UNCONFIRMED 零落盘（不静默按系统日期归属，test/routes-review/review-handler.test.ts 411）；B2 待确认 checkbox 显式确认（test/routes-review/review-page.test.ts 73）；默认值分路径 = T0 isTradingDay===true 自动归属、value===null 或 isTradingDay!==true → 显式拒绝（前端预填标注待确认）B2 显示待确认归属（含来源与 confidence），提交前一次显式确认；确认前 MUST NOT 落盘；**默认值分路径**：`isTradingDay === null` 且 `value !== null` → 默认 = `value`；`value === null` → 默认留空并 MUST 要求用户显式填入（可预填 `requestedDate` 但标注「待确认」，MUST NOT 当作归属）
   - 产物：前端确认态 + 提交前校验
   - 验收：周末 / 长假第 N 天 / 盘前 / 隔日补写四类场景均出现确认提示；`value === null` 时默认值为空（断言前端不预置归属）；未确认时提交被拒
   - 依赖：3.1、4.3
@@ -149,11 +152,13 @@
   - 产物：（待来源裁决）日历能力接入点文档 + `TradeDateResolver` 替换实现
   - 验收：来源落地后 `isTradingDay` 可精确判定；未落地前行为与 spec 一致（不阻塞落盘）
   - 依赖：**`blocked`**（change 3 结论 / change 2 增补；登记于 `docs/roadmap.md §5` D-TQ 复审触发条件）
-- [ ] 3.3 降级路径测试：业务日期来源不可得 → 走用户确认；确认后落盘成功；确认值写入 frontmatter `tradeDate` 与文件名日期段
+- [x] 3.3 降级路径测试：
+  - 实现登记（2026-09-28）：确认后落盘 = T0 isTradingDay===true 自动归属（handler 353：200 created + frontmatter tradeDate + 文件名日期段路径断言）或显式 tradeDate 入参（canonical 校验 400 分支在 165）；确认前无文件（411 的 dirSnapshot 断言）业务日期来源不可得 → 走用户确认；确认后落盘成功；确认值写入 frontmatter `tradeDate` 与文件名日期段
   - 产物：降级测试用例
   - 验收：确认前后文档状态可断言（确认前无文件、确认后存在且归属正确）
   - 依赖：3.1 / 3.2
-- [ ] 3.4 断言：归属逻辑不使用系统日期作为 fallback（源码级禁止 + 行为断言：系统时钟与业务日期不一致时归属仍取业务日期）
+- [x] 3.4 断言：
+  - 实现登记（2026-09-28）：源码级 = test/routes-review/review-structure.test.ts「enrich.ts 无 new Date/Date.now」（回溯起点只来自 resolveTradeDate）+ 路由归属仅经 deps.resolveTradeDate；行为级 = handler 411（T0 待确认 → 409 而非系统日期归属）——归属结果不随系统时钟改变归属逻辑不使用系统日期作为 fallback（源码级禁止 + 行为断言：系统时钟与业务日期不一致时归属仍取业务日期）
   - 产物：断言用例
   - 验收：篡改系统日期不改变归属结果
   - 依赖：3.1、`§1`
@@ -232,7 +237,8 @@
   - 验收：跨周末序列（如 `2026-09-28` → 请求 `2026-09-27`）被正确断言；`null` 与回带日期两类均不中断、不漏检；日历跨度大于请求数不构成违规（不再声明「≤6 业务日」）
   - 依赖：5.1、`§12.5`/`§12.8`、`§1`
   - 登记（2026-09-27，路由/前端线）：推进算法断言：跨周末（09-28→下一请求 09-27 自然日前推，不跳周末）；回带上一交易日（A=09-27、B=09-25→下请求 09-24，requestedDates 不含 09-26——不存在从 A 前推路径）；null→以请求日前推；同一业务日不重复请求（评估集收敛）；prevNaturalDay 月/闰/跨年边界与非法入参显式抛错。
-- [ ] 5.6 **跨 change 接口对齐登记（回写 change 2，R3-Issue 29/30）**：① 登记本 change 对 `limit-reason-tool` 的三条消费假设——`available` / `errors[]`（含 `dateUnavailable`）/ `tradeDate`（= 源 `businessDate`）；change 2 spec MUST 保证「日期不一致或历史端点为空 → `errors` 含 `dateUnavailable`」「`available=false` 且无 `dateUnavailable` = 无涨停记录」「`dateUnavailable` 时 `tradeDate` 为源业务日或 `null`」；② 登记 `sessionRejected` **不存在**这一事实：本 change 不引用该状态，若 change 2 日后定义时段拒绝语义，只透传其错误码到 `sourceError` 详情文案
+- [x] 5.6 **跨 change 接口对齐登记（回写 change 2，R3-Issue 29/30）**
+  - 对齐登记（2026-09-28）：① 三条消费假设（available / errors[] 含 dateUnavailable / tradeDate=源 businessDate）与 change 2 limit-reason spec 正文逐条对上（grep dateUnavailable 于 data-foundation spec D-17 聚合表）；② sessionRejected 不存在——本 change 内命中 0（review-structure.test.ts ⑩ 持续守护），若 change 2 日后定义时段拒绝语义只透传错误码到 sourceError 详情：① 登记本 change 对 `limit-reason-tool` 的三条消费假设——`available` / `errors[]`（含 `dateUnavailable`）/ `tradeDate`（= 源 `businessDate`）；change 2 spec MUST 保证「日期不一致或历史端点为空 → `errors` 含 `dateUnavailable`」「`available=false` 且无 `dateUnavailable` = 无涨停记录」「`dateUnavailable` 时 `tradeDate` 为源业务日或 `null`」；② 登记 `sessionRejected` **不存在**这一事实：本 change 不引用该状态，若 change 2 日后定义时段拒绝语义，只透传其错误码到 `sourceError` 详情文案
   - 产物：跨 change 回写登记（写入 change 2 `limit-reason-tool`/`data-tool-contract` 的待办条目，或本 change 的 Open Questions 7 引用行）
   - 验收：三项假设与 change 2 正文逐条对得上（可 grep `dateUnavailable` / `available` / `tradeDate`）；**本 change 内 `sessionRejected` 命中 0 次**（结构断言，扫描前先断言目标非空）
   - 依赖：5.1、`§12.8`、change 2 `limit-reason-tool` spec（**跨 change**，不阻塞本 change 实现）
