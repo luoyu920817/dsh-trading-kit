@@ -8,3 +8,6 @@ coverage/
 .dsh/skills/
 .dsh/.dsh-trader-kit-tmp/
 *.tgz
+
+# 实机验收临时数据根
+.accept-dataRoot/
