@@ -110,7 +110,7 @@ describe('GET /review：页面 HTML（tasks 2.1/2.4）', () => {
   })
 
   it('注入函数与 probe 同款转义：state 含 </script> 形态字符时不逃逸出脚本', () => {
-    const state = { writable: false, basePath: '</script><x>', routePath: REVIEW_PAGE_PATH, injectedAt: '2026-09-27T00:00:00+08:00' }
+    const state = { writable: false, basePath: '</script><x>', routePath: REVIEW_PAGE_PATH, injectedAt: '2026-09-27T00:00:00+08:00', writeKey: 'test-write-key' }
     const html = injectReviewState('window.__REVIEW__ = __REVIEW_STATE_JSON__;', state)
     expect(html).not.toContain('</script><x>')
     expect(html).toContain('\\u003C')
@@ -308,7 +308,7 @@ describe('GET /review/api/enrich：网络段（tasks 2.1；名称层②/标签/�
 describe('POST /review/api/card：A 层写入通道（tasks 2.2/2.7；spec 认证分层）', () => {
   const validPayload = { code: '600000', body: '分时回封，量能跟上', clientRequestId: 'req-001' }
 
-  it('未携带 A 层凭据 → 401 {UNAUTHENTICATED} + 提示，零落盘', async () => {
+  it('无凭据（无 cookie 无 key）→ 401 {UNAUTHENTICATED} + 提示，零落盘（owner 2026-10-05：写凭据②=回环+key）', async () => {
     const root = makeTempRoot()
     const { deps } = makeDeps({ dataRoot: root })
     const before = dirSnapshot(root)
@@ -316,7 +316,28 @@ describe('POST /review/api/card：A 层写入通道（tasks 2.2/2.7；spec 认�
     expect(rec.status).toBe(401)
     const body = jsonBody<{ error: string; message: string }>(rec)
     expect(body.error).toBe('UNAUTHENTICATED')
-    expect(body.message).toContain('两步登录')
+    expect(body.message).toContain('writeKey')
+    expect(dirSnapshot(root)).toEqual(before)
+  })
+
+  it('写凭据②：无 cookie + x-write-key 匹配 → 200 created（owner 2026-10-05 回环+key 通道）', async () => {
+    const root = makeTempRoot()
+    const { deps } = makeDeps({ dataRoot: root })
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_CARD, method: 'POST', body: JSON.stringify(validPayload), headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(rec.status).toBe(200)
+    expect(jsonBody<{ status: string }>(rec).status).toBe('created')
+  })
+
+  it('写凭据②负向：key 错误 → 401 零落盘', async () => {
+    const root = makeTempRoot()
+    const { deps } = makeDeps({ dataRoot: root })
+    const before = dirSnapshot(root)
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_CARD, method: 'POST', body: JSON.stringify(validPayload), headers: { 'x-write-key': 'wrong' },
+    }))
+    expect(rec.status).toBe(401)
     expect(dirSnapshot(root)).toEqual(before)
   })
 

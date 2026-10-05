@@ -103,7 +103,7 @@ describe('T2 概念缓存（owner 实测修订 2026-10-05：S8 响应按 symbol 
       expect(h.stub.count('plates_by_any_stock')).toBe(2)
       expect(h.deps.guard.status().budgetUsed).toBe(2)
       expect(a.available).toBe(true)
-      expect(a.concepts.map((c: { name: string }) => c.name)).toEqual(['破净股'])
+      expect(a.concepts.map((c) => c.name)).toEqual(['破净股'])
       // 603919：空数据 → 显式不可用（MUST NOT 命中 000002 的缓存串股）。
       expect(b.available).toBe(false)
       expect(b.name).toBeNull()

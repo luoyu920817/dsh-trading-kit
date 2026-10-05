@@ -128,6 +128,7 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
   const deps: ReviewHandlerDeps = {
     requestRejection: stubRequestRejection,
     allowUnauthenticatedRead: false,
+    writeKey: 'test-write-key',
     locateDoc: locateDocCounted,
     parseDoc,
     appendCard,

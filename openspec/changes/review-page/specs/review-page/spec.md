@@ -61,6 +61,7 @@
 - **B 层** = change 1 定义的**插件自持诊断 token**，**仅诊断/只读**，MUST NOT 被当作宿主认证的等价物。
 - **C 层** = `file://` 就地只读（需 owner 签字），MUST NOT 承载业务写入。
 
+**写接口认证修订（owner 裁决 2026-10-05「写卡免登录，用 IP 白名单或固定 key」）**：写接口 SHALL 接受两类凭据之一——① **A 层 cookie**（原通道，保留兼容）；② **回环来源 + 固定密钥**：宿主 webServer 仅绑 `127.0.0.1`（即 IP 白名单 = 回环），且请求须携带密钥（`x-write-key` 头或 body `writeKey`，值 = `config.review.writeKey`；缺省空串时由插件按进程随机生成并经页面注入自动携带——使用者零手动操作）。密钥经服务端注入页面（页面读者与密钥持有者同为回环访问者，威胁模型一致）。两道检查缺一不可（来源回环 + 密钥匹配）；MUST NOT 在非回棒绑定下放开。
 **`POST <basePath>/review/api/card` 与一切落盘路径 MUST NOT 依赖 B/C 层**：写接口只接受 A 层（宿主 cookie）凭据。
 **读通道 C 层放宽（owner 签字沿革 2026-10-05）**：owner 签字「全部免签名」——默认分支的页面与**读接口**（GET /review、/api/local、/api/enrich、/api/dates、静态资产）SHALL 免认证只读放行（`allowUnauthenticatedRead = true`）；放宽点 = 仅 GET 只读、仅本插件 /review 路由族、服务端仅绑 127.0.0.1；**写接口的 A 层硬门槛不随本签字放宽**（与 change 1 C 层签字同款边界）。签字时间与范围 SHALL 记入 `docs/roadmap.md §5.0`。**A 层不可用即写接口不可用**——SHALL 显式禁用（返回明确错误码 + 提示「认证不可用，卡片不可写入」）并让页面降级为**只读**（B4 可读、B3 提交禁用并显示原因），MUST NOT 放宽认证、MUST NOT 以 B 层诊断 token 或未认证 loopback 承接写入。页面的取数与写入 MUST 经插件内部实现完成，渲染进程 MUST NOT 直接访问 vault 文件系统、MUST NOT 绕开认证直接写文件。**该要求对默认分支与回退分支同等生效**。
 

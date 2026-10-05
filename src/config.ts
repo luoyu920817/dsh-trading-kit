@@ -91,6 +91,8 @@ export interface ResolvedTraderKitConfig {
   }
   /** change 3（tq-skill-installer）追加段（4.1；append-only，不动上文字段）。 */
   skill: ResolvedSkillConfig
+  /** change 4（review-page）追加段（owner 裁决 2026-10-05：写接口回环+固定密钥）。 */
+  review: { writeKey: string }
 }
 
 /** 部署侧可提供的部分配置（深层可选；Loader schema 或 resolveTraderKitConfig 补默认值）。 */
@@ -122,6 +124,7 @@ export type TraderKitConfig = {
     extraSkillRoots?: string[]
     limits?: Partial<ZipLimits>
   }
+  review?: { writeKey?: string }
 }
 
 export const Config: z<TraderKitConfig> = z.object({
@@ -175,6 +178,11 @@ export const Config: z<TraderKitConfig> = z.object({
       maxFileBytes: z.number().min(1).default(DEFAULT_ZIP_LIMITS.maxFileBytes),
       maxTotalBytes: z.number().min(1).default(DEFAULT_ZIP_LIMITS.maxTotalBytes),
     }),
+  }),
+  // change 4（review-page）：写接口密钥——空串 = 进程随机生成（经页面注入自动携带）；
+  // 设定值 = 固定 key（可写进 profile，重启不变）。
+  review: z.object({
+    writeKey: z.string().default(''),
   }),
 })
 

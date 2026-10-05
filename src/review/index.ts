@@ -11,7 +11,9 @@
  * ③ `registerReviewDaily`——每日汇总工具与 dailyReport 出口（change 5，src/tools/review-daily.ts）。
  * 各 change 只动自己的文件，本文件只保留三行调用。
  */
+import { randomBytes } from 'node:crypto'
 import type { Context } from '../context-types.ts'
+import type { ResolvedTraderKitConfig } from '../config.ts'
 import { registerReviewDaily } from '../tools/review-daily.ts'
 import { registerReviewRoutes } from '../routes/review.ts'
 import {
@@ -54,8 +56,11 @@ function attachReviewService(ctx: Context): void {
 }
 
 /** 复盘线总装配：服务面 → 路由族（change 4）→ 每日汇总（change 5），顺序即依赖序。 */
-export function registerReview(ctx: Context): void {
+export function registerReview(ctx: Context, config: ResolvedTraderKitConfig): void {
   attachReviewService(ctx)
-  registerReviewRoutes(ctx)
+  // 写接口密钥（owner 裁决 2026-10-05）：config.review.writeKey 设定值优先（固定 key，
+  // 重启不变）；空串 = 进程随机生成（页面经服务端注入自动携带，使用者零操作）。
+  const writeKey = config.review.writeKey !== '' ? config.review.writeKey : randomBytes(24).toString('hex')
+  registerReviewRoutes(ctx, { writeKey })
   registerReviewDaily(ctx)
 }

@@ -15,6 +15,7 @@ import {
 import { appendCard } from '../../src/review/store.ts'
 import { NOW_1432, TRADE_DATE, makeTempRoot, srcText } from './helpers.ts'
 import { registerReview } from '../../src/review/index.ts'
+import { resolveTraderKitConfig } from '../../src/config.ts'
 import type { Context } from '../../src/context-types.ts'
 
 describe('NameResolver 三层兜底（契约 §12.4）', () => {
@@ -168,14 +169,14 @@ describe('registerReview 装配（tasks 1.12：service key traderKit.review.*）
   }
 
   it('未就绪（registerData 之前）→ 显式抛错', () => {
-    expect(() => registerReview(fakeCtx(undefined))).toThrow(/registerReview 必须在 registerData 之后/)
+    expect(() => registerReview(fakeCtx(undefined), resolveTraderKitConfig())).toThrow(/registerReview 必须在 registerData 之后/)
   })
 
   it('挂载五个出口；scanDailyCardTargets 绑定装配期 dataRoot（change 5 复用同一实现）', async () => {
     const root = makeTempRoot()
     // traderKit 服务对象本体（registerReview 对既有服务追加 review 出口，不重建 provide）。
     const api: { data: Record<string, unknown>; review?: Record<string, unknown> } = { data: { dataRoot: root } }
-    registerReview(fakeCtx(api as unknown))
+    registerReview(fakeCtx(api as unknown), resolveTraderKitConfig())
     expect(api.review).toBeDefined()
     const review = api.review as Record<string, unknown>
     for (const key of ['locateDoc', 'parseDoc', 'appendCard', 'appendAinote', 'scanDailyCardTargets']) {
@@ -194,7 +195,7 @@ describe('registerReview 装配（tasks 1.12：service key traderKit.review.*）
 
   it('dataRoot 未透出时出口仍挂载，操作期以 resolveArea 显式报错给配置指引', async () => {
     const api: { data: Record<string, unknown>; review?: Record<string, unknown> } = { data: {} }
-    registerReview(fakeCtx(api as unknown))
+    registerReview(fakeCtx(api as unknown), resolveTraderKitConfig())
     const locate = (api.review as Record<string, unknown>).locateDoc as (typeof import('../../src/review/store.ts').locateDoc)
     await expect(locate({ dataRoot: '', code: '600000', name: 'x', tradeDate: TRADE_DATE }))
       .rejects.toThrow(/数据根未配置|dataRoot/)

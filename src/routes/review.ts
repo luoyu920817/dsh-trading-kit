@@ -51,6 +51,7 @@ import {
   type BacktrackResult,
   type LimitDayFetcher,
 } from '../review/enrich.ts'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { formatZonedIso } from '../review/format.ts'
 import { appendCard, DocMismatchError, ConcurrentWriteError, locateDoc, parseDoc, type Card, type Loc } from '../review/store.ts'
 import { resolveArea } from '../paths/resolve.ts'
@@ -71,8 +72,11 @@ export const ALLOW_UNAUTHENTICATED_READ_DEFAULT = true
 
 /** 页面注入状态（`window.__REVIEW__`；D-3 只读降级标记 = writable）。 */
 export interface ReviewPageState {
-  /** A 层可用（或经签字只读分支且 A 层可用）= true；签字只读分支 = false。 */
+  /** A 层可用（或经签字只读分支且 A 层可用）= true；owner 2026-10-05 起写通道有
+   *  writeKey 兜底，页面恒可写（writeKey 由服务端注入，页面自动携带）。 */
   writable: boolean
+  /** 写接口密钥（服务端注入——页面 POST 自动携带；页面读者 = 回环访问者，威胁模型一致）。 */
+  writeKey: string
   basePath: string
   routePath: string
   /** ISO 8601 注入时刻（运行时刻展示，非业务日期）。 */
@@ -130,6 +134,8 @@ export interface ReviewHandlerDeps {
   basePath: string
   dataRoot: string
   now(): Date
+  /** 写接口密钥（owner 裁决 2026-10-05：回环 + 固定密钥；空串由装配层生成随机值）。 */
+  writeKey: string
   /** 回溯上限（默认 6，enrich 内部 clamp 到 [1,6]）。 */
   backtrackLimit?: number
 }
@@ -306,12 +312,31 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
   function servePage(res: TraderKitHttpResponse, writable: boolean): void {
     const state: ReviewPageState = {
       writable,
+      writeKey: deps.writeKey,
       basePath: deps.basePath,
       routePath: pageExact,
       injectedAt: new Date().toISOString(),
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
     res.end(injectReviewState(deps.htmlTemplate, state))
+  }
+
+  /**
+   * 写接口凭据②（owner 裁决 2026-10-05）：回环来源 + 密钥匹配。
+   * 来源白名单 = 宿主仅绑 127.0.0.1（socket.remoteAddress 复核，IPv4/IPv6 回环形态）；
+   * 密钥 = x-write-key 头（值 = config.review.writeKey，常数时间比对）。
+   */
+  function writeCredentialValid(req: TraderKitHttpRequest): boolean {
+    const socket = (req as { socket?: { remoteAddress?: unknown } }).socket
+    const addr = typeof socket?.remoteAddress === 'string' ? socket.remoteAddress : '127.0.0.1'
+    const loopback = addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1'
+    if (!loopback) return false
+    const provided = req.headers?.['x-write-key']
+    const value = Array.isArray(provided) ? provided[0] : provided
+    if (typeof value !== 'string' || value === '') return false
+    const a = Buffer.from(value)
+    const b = Buffer.from(deps.writeKey)
+    return a.length === b.length && timingSafeEqual(a, b)
   }
 
   function invalidCodeBody(codeRaw: string): { error: string; message: string } {
@@ -714,11 +739,16 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       if (rejection === 401) {
         const method = req.method ?? 'GET'
         if (method === 'GET' && deps.allowUnauthenticatedRead) {
-          // C 层签字只读分支（默认关闭）：页面注入 writable=false 降级；API 只读放行。
+          // C 层签字只读分支（owner 2026-10-05 签字采纳）：页面带 writeKey 注入（写仍可用）。
           await route(req, res, rawPath, query, true)
           return
         }
-        writeJsonError(res, 401, 'UNAUTHENTICATED', 'A 层 cookie 未生效——在 DSH 内打开根地址 ?token= 完成两步登录，或在 DSH 会话侧写卡')
+        // owner 裁决 2026-10-05：写接口凭据② = 回环来源 + 固定密钥（spec 写接口认证修订）。
+        if (method === 'POST' && rawPath === pageExact + '/api/card' && writeCredentialValid(req)) {
+          await route(req, res, rawPath, query, false)
+          return
+        }
+        writeJsonError(res, 401, 'UNAUTHENTICATED', '写卡凭据缺失——页面应自动携带 writeKey；手动调用请带 x-write-key 头（config.review.writeKey）')
         return
       }
       await route(req, res, rawPath, query, false)
@@ -739,8 +769,10 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
 
 /** `registerReviewRoutes` 选项（生产零传参；结构断言用参数断言 C 层开关两态）。 */
 export interface ReviewRoutesOptions {
-  /** 覆盖 C 层只读开关（默认 ALLOW_UNAUTHENTICATED_READ_DEFAULT=false）。 */
+  /** 覆盖 C 层只读开关（默认 ALLOW_UNAUTHENTICATED_READ_DEFAULT=true——owner 2026-10-05 签字）。 */
   allowUnauthenticatedRead?: boolean
+  /** 写接口密钥（owner 裁决 2026-10-05：回环 + 固定密钥；必填注入）。 */
+  writeKey?: string
 }
 
 interface ReviewLogger {
@@ -787,6 +819,7 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
   const handler = createReviewHandler({
     requestRejection: (req) => ctx.connection.requestRejection(req),
     allowUnauthenticatedRead: options.allowUnauthenticatedRead ?? ALLOW_UNAUTHENTICATED_READ_DEFAULT,
+    writeKey: options.writeKey ?? randomBytes(24).toString('hex'),
     locateDoc,
     parseDoc,
     appendCard,

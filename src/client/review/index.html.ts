@@ -538,7 +538,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     setMode('submitting');
     fetch(basePath + '/review/api/card', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-write-key': (window.__REVIEW__ && window.__REVIEW__.writeKey) || '' },
       body: JSON.stringify(payload),
     }).then(function (resp) {
       return resp.json().then(function (b) { return { status: resp.status, body: b }; });
