@@ -67,7 +67,6 @@ export const REVIEW_HTML = `<!DOCTYPE html>
 </head>
 <body>
 <div class="rv-container">
-<h1>复盘卡片</h1>
 
 <section id="rv-b1">
   <div id="rv-code-line">
@@ -219,7 +218,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       el.textContent = '查看日期：' + lastLocal.date;
     } else if (td !== null && td !== undefined && td.value !== null && td.value !== undefined) {
       if (td.isTradingDay === true) el.textContent = '归属交易日 ' + td.value + '（来源 ' + td.source + '）';
-      else el.textContent = '归属待确认：' + td.value + '（来源 ' + td.source + '）——保存前请勾选确认';
+      else el.textContent = '归属待确认：' + td.value + '（来源 ' + td.source + '）——可直接保存，或自行修改日期';
     } else {
       el.textContent = '归属待确认：交易日不可得（可能为休市日/盘前）——请在 B2 显式选择最近交易日（如 2026-09-30）';
     }
@@ -412,10 +411,6 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     var c = data.concepts;
     var conceptsEl = byId('rv-concepts');
     conceptsEl.textContent = '';
-    var tagLabel = document.createElement('span');
-    tagLabel.className = 'muted';
-    tagLabel.textContent = '标签';
-    conceptsEl.appendChild(tagLabel);
     if (c !== null && c !== undefined && c.available === true && c.labels.length > 0) {
       for (var ti = 0; ti < c.labels.length; ti++) {
         var chip = document.createElement('span');

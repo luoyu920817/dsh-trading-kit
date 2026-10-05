@@ -564,20 +564,21 @@ describe('认证读分档（tasks 2.2；默认分支 A 层 / 签字只读分支�
     expect(local.status).toBe(401)
   })
 
-  it('签字只读分支（allowUnauthenticatedRead=true）：GET 页面 200 + 注入 writable:false（页面只读降级标记）；读接口放行', async () => {
+  it('签字只读分支（allowUnauthenticatedRead=true）：GET 页面 200 + 注入 writable:true（writeKey 通道就位，页面恒可写）；读接口放行', async () => {
     const { deps } = makeDeps({ overrides: { allowUnauthenticatedRead: true } })
     const handler = createReviewHandler(deps)
     const page = await drive(handler, makeReq({ url: REVIEW_PAGE_PATH }))
     expect(page.status).toBe(200)
     const state = injectedReviewState(page.body)
-    expect(state.writable).toBe(false)
-    expect(page.body).toContain('rv-readonly-hint')
+    // owner 2026-10-05：writeKey 通道就位——只读分支注入 writable:true（页面恒可写）。
+    expect(state.writable).toBe(true)
+    expect(state.writeKey.length).toBeGreaterThan(0)
     const local = await drive(handler, makeReq({ url: API_LOCAL + '?code=600000' }))
     expect(local.status).toBe(200)
     expect(jsonBody(local).code).toBe('600000')
-    // 直链同样注入降级标记。
+    // 直链同样注入可写状态。
     const direct = await drive(handler, makeReq({ url: REVIEW_PAGE_PATH + '/600000' }))
-    expect(injectedReviewState(direct.body).writable).toBe(false)
+    expect(injectedReviewState(direct.body).writable).toBe(true)
   })
 
   it('403 栅栏在签字只读分支下仍 403（栅栏不是认证）', async () => {

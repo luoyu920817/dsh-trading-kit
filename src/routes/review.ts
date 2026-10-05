@@ -658,7 +658,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         writeMethodNotAllowed(res, 'GET')
         return
       }
-      servePage(res, !unauthenticatedReadonly)
+      servePage(res, true) // owner 2026-10-05：writeKey 通道就位——页面恒可写
       return
     }
     if (rawPath === pageExact + '/api/local') {
@@ -718,7 +718,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         writeJsonError(res, 404, 'NOT_FOUND', '路径不存在（含穿越段/盘符/非常规文件名的直链一律 404）')
         return
       }
-      servePage(res, !unauthenticatedReadonly)
+      servePage(res, true) /* owner 2026-10-05：writeKey 通道——恒可写 */
       return
     }
     writeJsonError(res, 404, 'NOT_FOUND', '路径不存在')
