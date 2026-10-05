@@ -61,12 +61,13 @@ export const REVIEW_BASE_PATH = '/dsh-trader-kit'
 export const REVIEW_PAGE_PATH = REVIEW_BASE_PATH + '/review'
 
 /**
- * C 层未认证只读开关（复盘页）：**默认 false**——复盘页只读 C 层未签字，owner 对
- * 探针页（UNAUTHENTICATED_READONLY_DEFAULT=true）的签字不外溢到复盘页。置 true 前
- * MUST 取得 owner 对复盘页的单独签字，签字范围（来源/方法/路径白名单）记
- * docs/roadmap.md §5。该开关只放宽 GET 读通道；写接口在任何取值下只认 A 层。
+ * C 层未认证只读开关（复盘页）：**owner 签字沿革**——2026-10-05 owner 指示
+ * 「全部免签名」，签字采纳复盘页读通道免认证（`allowUnauthenticatedRead=true`）。
+ * 放宽点 = 仅本插件 /review 路由族的 GET 只读（页面/本地读/回溯/静态资产）、
+ * 服务端仅绑 127.0.0.1；**写接口在任何取值下只认 A 层**（红线不随本签字移动；
+ * A 层不可用时页面呈现只读降级 + DSH 侧写卡提示）。签字范围记 docs/roadmap.md §5.0。
  */
-export const ALLOW_UNAUTHENTICATED_READ_DEFAULT = false
+export const ALLOW_UNAUTHENTICATED_READ_DEFAULT = true
 
 /** 页面注入状态（`window.__REVIEW__`；D-3 只读降级标记 = writable）。 */
 export interface ReviewPageState {
@@ -809,9 +810,17 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
                 : 'S8 未返回可用概念',
       })),
     runBacktrack: runLimitReasonBacktrack,
-    // 层②：T2/S8 名称反查（getConcepts.name，best-effort；失败/未命中 → null，调用侧显式降级）。
-    lookupNameRemote: (code) =>
-      data.getConcepts({ code }).then((r) => (r.available === true && typeof r.name === 'string' && r.name !== '' ? r.name : null)),
+    // 层②：T2/S8 名称反查（getConcepts.name）→ 未命中再行情名称源兜底
+    // （data.getQuoteName——change 2 新出口，owner 2026-10-05「名称必须显示」；
+    // S8 反查仅覆盖板块前 N 权重股，realhead 行情源兜底非权重股）。
+    lookupNameRemote: async (code) => {
+      try {
+        const r = await data.getConcepts({ code })
+        if (r.available === true && typeof r.name === 'string' && r.name !== '') return r.name
+      } catch { /* S8 失败 → 落行情源兜底 */ }
+      const q = await data.getQuoteName(code)
+      return q.available === true ? q.name : null
+    },
     // 本地段名称（层①/③）：不注入反查——/api/local 的名称取值域零网络（§12.4）。
     resolveLocalName: (code) =>
       localNameResolver.resolve(code).then((r) => ({

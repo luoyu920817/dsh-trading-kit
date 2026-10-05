@@ -198,17 +198,27 @@ describe('与 change 1 探针路由共存（tasks 2.1 验收：重复 (kind,path
   })
 })
 
-describe('C 层开关两态（tasks 2.2；生产默认 false，复盘页签字不外溢探针签字）', () => {
-  it('默认：未认证 GET 页面 → 401', async () => {
+describe('C 层开关两态（tasks 2.2；owner 2026-10-05 签字「全部免签名」→ 生产默认 true；关闭态以显式 false 注入覆盖）', () => {
+  it('生产默认（签字采纳）：未认证 GET 页面 → 200 + 注入 writable:false（只读降级，写接口仍 401）', async () => {
     const h = createHarness({ dataRoot: makeTempRoot() })
     registerReviewRoutes(h.ctx)
+    const page = h.routes.find((r) => r.kind === 'exact' && r.path === REVIEW_PAGE_PATH)!
+    const rec = await drive(page.handler, REVIEW_PAGE_PATH)
+    expect(rec.status).toBe(200)
+    expect(injectedReviewState(rec.body).writable).toBe(false)
+    // 写接口在只读分支下仍只认 A 层（红线）——专门用例见 review-handler.test.ts 311/323。
+  })
+
+  it('显式关闭（allowUnauthenticatedRead=false 注入）：未认证 GET 页面 → 401', async () => {
+    const h = createHarness({ dataRoot: makeTempRoot() })
+    registerReviewRoutes(h.ctx, { allowUnauthenticatedRead: false })
     const page = h.routes.find((r) => r.kind === 'exact' && r.path === REVIEW_PAGE_PATH)!
     const rec = await drive(page.handler, REVIEW_PAGE_PATH)
     expect(rec.status).toBe(401)
     expect(jsonBody(rec).error).toBe('UNAUTHENTICATED')
   })
 
-  it('options.allowUnauthenticatedRead=true：未认证 GET 页面 → 200 + 注入 writable:false', async () => {
+  it('options.allowUnauthenticatedRead=true 显式注入：未认证 GET 页面 → 200 + 注入 writable:false', async () => {
     const h = createHarness({ dataRoot: makeTempRoot() })
     registerReviewRoutes(h.ctx, { allowUnauthenticatedRead: true })
     const page = h.routes.find((r) => r.kind === 'exact' && r.path === REVIEW_PAGE_PATH)!

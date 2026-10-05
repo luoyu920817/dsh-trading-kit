@@ -23,7 +23,7 @@ import { formatZonedIso } from './normalize.ts'
 import type { SessionOverride } from '../config.ts'
 
 /** 护栏管辖的数据源（concepts 请求走 S8 端点，预算同记 S8）。 */
-export type GuardSource = 'S7' | 'S5' | 'S8'
+export type GuardSource = 'S7' | 'S5' | 'S8' | 'S9'
 
 export interface GuardConfig {
   maxConcurrency: number

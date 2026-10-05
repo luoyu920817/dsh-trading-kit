@@ -89,8 +89,44 @@ export async function resolveTradeDate(deps: DataDeps, input: TradeDateInput = {
   }
 
   const s7 = await fetchS7List(deps, requestedDate)
-  const businessDate = s7.ok ? s7.businessDate : null
-  const isTradingDay: true | null = businessDate !== null && businessDate === rateLimit ? true : null
+  let businessDate = s7.ok ? s7.businessDate : null
+  let isTradingDay: true | null = businessDate !== null && businessDate === rateLimit ? true : null
+  const probeNotes: string[] = []
+
+  // owner 裁决补丁（2026-10-05）：S7 List 响应无日期字段（实测）——请求日=限流日且
+  // List 行非空时，以「会话集合比对」定业务日（数据驱动，不猜日历）：
+  // 前探最近有数据的日期 D，List 代码集合 == D 的集合 → List 即 D 日会话（休市日）；
+  // List 有 D 没有的新代码 → List 是请求日的新会话（交易日）。详见 trade-date-tool spec 补丁。
+  if (s7.ok && businessDate === null && Object.keys(s7.rows).length > 0) {
+    const listCodes = new Set(Object.keys(s7.rows))
+    let probeDay: string | null = fromIsoShift(rateLimit, -1)
+    for (let i = 0; i < 6 && probeDay !== null; i++) {
+      const probeDate = probeDay
+      const h = await fetchS7List(deps, probeDate)
+      if (!h.ok || Object.keys(h.rows).length === 0) {
+        probeNotes.push(`探针 ${probeDate}: 无数据`)
+        probeDay = fromIsoShift(probeDate, -1)
+        continue
+      }
+      const probeCodes = new Set(Object.keys(h.rows))
+      const identical = listCodes.size === probeCodes.size
+        && [...listCodes].every((c) => probeCodes.has(c))
+      if (identical) {
+        businessDate = h.businessDate ?? probeDate
+        isTradingDay = null // D ≠ 限流日 → 归属待确认（休市日场景，页面预填 D）
+        probeNotes.push(`会话集合比对：List 与 ${businessDate} 的代码集合一致（${listCodes.size} 只）→ List 为该日会话`)
+      } else {
+        businessDate = rateLimit
+        isTradingDay = true // List 含新代码 → 请求日的新会话
+        probeNotes.push(`会话集合比对：List 含 ${probeDate} 没有的新代码 → List 为请求日（${rateLimit}）新会话`)
+      }
+      break
+    }
+    if (!probeNotes.some((n) => n.includes('→'))) {
+      probeNotes.push('前探 6 日均无数据（数据源未覆盖）——businessDate 保持 null')
+    }
+  }
+
   return {
     requestedDate,
     businessDate,
@@ -107,12 +143,24 @@ export async function resolveTradeDate(deps: DataDeps, input: TradeDateInput = {
     },
     errors: s7.ok ? [] : ['sourceUnavailable'],
     notes: s7.ok
-      ? (isTradingDay === null && businessDate !== null
+      ? [...probeNotes,
+         ...(isTradingDay === null && businessDate !== null
           ? [`businessDate=${businessDate} ≠ rateLimitDate=${rateLimit}，归属待用户确认（isTradingDay=null）`]
-          : [])
+          : [])]
       : [`S7 leg：${s7.errors.join('；') || '不可用'}`, ...s7.notes],
     guard: s7.guard,
   }
+}
+
+/** 自然日前移 N 天（经 date.ts 单点实现；越界/非法返回 null——不猜）。 */
+function fromIsoShift(iso: string, days: number): string | null {
+  const parsed = new Date(iso + 'T00:00:00Z')
+  if (Number.isNaN(parsed.getTime())) return null
+  const shifted = new Date(parsed.getTime() + days * 86_400_000)
+  const y = shifted.getUTCFullYear()
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 /** guardStatus 消费方（change 5 预检）读取的时间戳工具（供 service 出口复用）。 */

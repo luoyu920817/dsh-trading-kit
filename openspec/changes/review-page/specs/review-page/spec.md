@@ -61,7 +61,8 @@
 - **B 层** = change 1 定义的**插件自持诊断 token**，**仅诊断/只读**，MUST NOT 被当作宿主认证的等价物。
 - **C 层** = `file://` 就地只读（需 owner 签字），MUST NOT 承载业务写入。
 
-**`POST <basePath>/review/api/card` 与一切落盘路径 MUST NOT 依赖 B/C 层**：写接口只接受 A 层（宿主 cookie）凭据。**A 层不可用即写接口不可用**——SHALL 显式禁用（返回明确错误码 + 提示「认证不可用，卡片不可写入」）并让页面降级为**只读**（B4 可读、B3 提交禁用并显示原因），MUST NOT 放宽认证、MUST NOT 以 B 层诊断 token 或未认证 loopback 承接写入。页面的取数与写入 MUST 经插件内部实现完成，渲染进程 MUST NOT 直接访问 vault 文件系统、MUST NOT 绕开认证直接写文件。**该要求对默认分支与回退分支同等生效**。
+**`POST <basePath>/review/api/card` 与一切落盘路径 MUST NOT 依赖 B/C 层**：写接口只接受 A 层（宿主 cookie）凭据。
+**读通道 C 层放宽（owner 签字沿革 2026-10-05）**：owner 签字「全部免签名」——默认分支的页面与**读接口**（GET /review、/api/local、/api/enrich、/api/dates、静态资产）SHALL 免认证只读放行（`allowUnauthenticatedRead = true`）；放宽点 = 仅 GET 只读、仅本插件 /review 路由族、服务端仅绑 127.0.0.1；**写接口的 A 层硬门槛不随本签字放宽**（与 change 1 C 层签字同款边界）。签字时间与范围 SHALL 记入 `docs/roadmap.md §5.0`。**A 层不可用即写接口不可用**——SHALL 显式禁用（返回明确错误码 + 提示「认证不可用，卡片不可写入」）并让页面降级为**只读**（B4 可读、B3 提交禁用并显示原因），MUST NOT 放宽认证、MUST NOT 以 B 层诊断 token 或未认证 loopback 承接写入。页面的取数与写入 MUST 经插件内部实现完成，渲染进程 MUST NOT 直接访问 vault 文件系统、MUST NOT 绕开认证直接写文件。**该要求对默认分支与回退分支同等生效**。
 
 #### Scenario: 未认证请求写入接口
 
@@ -114,7 +115,7 @@
 
 ### Requirement: 名称三级兜底的分层归属
 
-B1 SHALL 显示标的代码，名称 SHALL 按三层兜底获取，且**层号 = 兜底优先级、每层接口归属唯一**（`iteration-1-contracts §12.4`）：① 该标的历史卡片文档 frontmatter 的 `name`（零网络，归 `/api/local`）；② 数据工具 T2/S8 名称反查（best-effort，归 `/api/enrich`，入参含 `code`）；③ 仅显示代码（归 `/api/local`）。
+B1 SHALL 显示标的代码，名称 SHALL 按三层兜底获取，且**层号 = 兜底优先级、每层接口归属唯一**（`iteration-1-contracts §12.4`）：① 该标的历史卡片文档 frontmatter 的 `name`（零网络，归 `/api/local`）；② 数据工具名称反查（best-effort，归 `/api/enrich`，入参含 `code`）：**先 T2/S8 反查（`nameSource: 'T2-S8'`），未命中再行情名称源探针（同花顺 realhead，`nameSource: 'quote-ths'`；owner 指示 2026-10-05「名称必须显示」——S8 反查仅覆盖板块前 N 权重股，非权重股需行情源兜底）**；③ 仅显示代码（归 `/api/local`）。
 
 - `/api/local` MUST NOT 执行网络反查，其名称取值域只有 ① 与 ③，并 SHALL 返回 `nameSource: 'frontmatter-history' | 'code-only'`。
 - `/api/enrich` SHALL 返回层②的 `name` 与 `nameSource: 'T2-S8'`；页面在本地段为 `code-only` 时用层②**补位替换**并更新来源标注；本地段已命中层①时 MUST NOT 被网络段覆盖。

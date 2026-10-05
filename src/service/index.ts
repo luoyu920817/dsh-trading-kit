@@ -17,6 +17,7 @@
 import type { Context } from '../context-types.ts'
 import type { ResolvedTraderKitConfig } from '../config.ts'
 import { createDataDeps, type DataDeps } from '../data/deps.ts'
+import { fetchQuoteName } from '../data/quote-name.ts'
 import { createDataHealth, type DataHealth, type DataHealthSnapshot } from '../data/health.ts'
 import { resolveTradeDate, type TradeDateResult } from '../data/trade-date.ts'
 import { getLimitReason, type LimitReasonResult } from '../data/limit-reason.ts'
@@ -46,6 +47,8 @@ export interface TraderKitDataApi {
   getLimitReason(input: { code: string; date?: string }): Promise<LimitReasonResult>
   /** T2 概念（S8 实时快照；date 仅用于缓存分桶）。 */
   getConcepts(input: { code: string; date?: string }): Promise<ConceptsResult>
+  /** 行情名称探针（同花顺 realhead；S8 反查未命中时的名称兜底——owner 2026-10-05）。 */
+  getQuoteName(code: string): Promise<{ available: boolean; name: string | null; source: string | null; errors: string[]; fetchedAt: string | null }>
   /** 频控状态只读快照（唯一预算出口：同一内存计数、不出站，design D-16）。 */
   guardStatus(): GuardStatus
 }
@@ -85,6 +88,7 @@ export function registerData(ctx: Context, config: ResolvedTraderKitConfig, over
     resolveTradeDate: (input = {}) => resolveTradeDate(deps, input),
     getLimitReason: (input) => getLimitReason(deps, input),
     getConcepts: (input) => getConcepts(deps, input),
+    getQuoteName: (code) => fetchQuoteName(deps, code),
     guardStatus: () => deps.guard.status(),
   }
 

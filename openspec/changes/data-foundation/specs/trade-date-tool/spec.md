@@ -11,6 +11,8 @@
 
 日期三义的来源定义、格式唯一口径、路由判据与消费方约束见 `iteration-1-contracts §1`，本 spec 不复述第二份口径。
 
+> **owner 裁决补丁（2026-10-05，「找到最近期的交易日」）**：S7 List 端点响应体**不含日期字段**（实测：List 仅 fields/page/surgeList/top；History 才有 `data.date`，且该 date 为请求日回显）——List 路径按原口径记 `businessDate=null` 会让交易日归属**永远**待确认。修正（**会话集合比对**，数据驱动、不猜日历）：请求日 = 限流日且 List 行非空时，T0 SHALL 自限流日前一自然日起逐自然日前探（经 `src/data/date.ts` 折算，上限 6 次探针）找到首个「History `surgeList` 非空」的最近日 D（`data.date` 回显），**比对 List 与 D 的代码集合**：完全一致 → List 即 D 日的会话（休市日场景），`businessDate=D`、`isTradingDay=null`（归属待确认，页面预填 D）；List 存在 D 没有的新代码 → List 为请求日的新会话，`businessDate=rateLimitDate`、`isTradingDay=true`；前探 6 日全空 → `businessDate=null`。探针命中即停；探针与 List 同用列表级缓存（键 = `source + requestedDate`），预算按列表级请求数计（T0 至多 1 + 6 次）。已知残余风险：连续两个交易日涨停代码集合完全一致时休市日可能被误归为当日（数据内容一致，归属可由用户显式确认纠正）。
+
 #### Scenario: 工具与 service 双出口同一实现
 
 - **WHEN** session 经 Tool 出口调用 `get_trade_date`，且同年同日随后页面经 `traderKit.data.resolveTradeDate` 调用
