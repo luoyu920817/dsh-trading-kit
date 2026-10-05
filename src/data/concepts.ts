@@ -26,7 +26,7 @@ import type { GuardRejection } from './guard.ts'
 import { fetchS8Plates, type S8PlatesResult } from './s8.ts'
 import { cleanText, field, formatZonedIso, ratioToPercent, type SourcedField } from './normalize.ts'
 
-export const CONCEPTS_CACHE_SCHEMA = 'concepts@1'
+export const CONCEPTS_CACHE_SCHEMA = 'concepts@2' // @2：键含 code + 负缓存（@1 为污染期缓存——跨标的串股，owner 实测 2026-10-05）
 
 /** reason 截断长度（照脚本 `_reason_short` 的 200 字上限）。 */
 export const REASON_MAX_LENGTH = 200

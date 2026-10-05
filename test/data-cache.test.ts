@@ -300,7 +300,7 @@ describe('概念缓存 schema 升级与无日期源键构造', () => {
       expect(h.stub.count('plates_by_any_stock')).toBe(2) // 未命中 → 重新取数
       for (const f of (await readdir(bucket)).filter((x) => x.startsWith('concepts__'))) {
         const rewritten = JSON.parse(await readFile(join(bucket, f), 'utf8')) as Record<string, unknown>
-        expect(rewritten['cacheSchema']).toBe('concepts@1') // 原位覆盖写（不另开垃圾文件）
+        expect(rewritten['cacheSchema']).toBe('concepts@2') // 原位覆盖写（不另开垃圾文件）
       }
     } finally {
       await h.cleanup()
