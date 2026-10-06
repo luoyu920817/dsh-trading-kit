@@ -292,12 +292,12 @@ unavailableDates: string[]   // 其中经 §12.8 判定为「数据不可得」�
 
 ### Requirement: B2 日期组件与历史读回
 
-B2 SHALL 默认指向**归属交易日**（由 seam 依 `iteration-1-contracts §1` 的 `resolveTradeDate` 得出），并允许切换到其它日期；切换后 SHALL 加载该标的对应交易日的卡片文档并按时间倒序渲染。归属日为「待确认」时（`value === null` 或 `isTradingDay === null`）SHALL 在 B2 显式显示待确认状态与来源，并在提交前要求一次用户确认，MUST NOT 静默按系统日期归属；默认值分路径：`value !== null` 且 `isTradingDay === null` → 默认 = `value`；`value === null` → **默认留空**并 MUST 要求用户显式填入（可预填 `requestedDate` 但标注「待确认」，MUST NOT 当作归属）。本迭代 MUST NOT 实现完整日历控件（月视图、有卡日期打标）——日期切换即为回读形态。
+B2 SHALL 默认指向**归属交易日**（由 seam 依 `iteration-1-contracts §1` 的 `resolveTradeDate` 得出），并允许切换到其它日期；切换后 SHALL 加载该标的对应交易日的卡片文档并按时间倒序渲染。日期选择 SHALL 使用页面内**自绘月历组件**（owner 2026-10-05 裁决：弃用原生 `<input type="date">`——其上下微调控件不可用且观感不符；深色主题、月视图、支持年/月跳转与清除），月历仅为日期选择器，MUST NOT 打标或展示有卡日期（不引入 `/api/dates` 依赖）；交易日推断 MUST NOT 来自系统日历（归属证据仍 = 数据源会话集合比对）。归属日展示保持干净（owner 2026-10-05 裁决：不再朗读「待确认/来源」文案——输入框本身已展示日期；仅交易日不可得时保留一行短提示）；保存即视为对预填/自选日期的显式提交（确认勾选框已移除，owner 2026-10-05），MUST NOT 静默按系统日期归属。
 
 #### Scenario: 默认归属交易日
 
 - **WHEN** 页面打开且未指定日期，seam 返回 `isTradingDay === true` 的归属日
-- **THEN** B2 显示该归属日与来源，B4 显示该日卡片
+- **THEN** B2 预填该归属日（不朗读来源标注），B4 显示该日卡片
 
 #### Scenario: 切换日期
 
@@ -312,7 +312,7 @@ B2 SHALL 默认指向**归属交易日**（由 seam 依 `iteration-1-contracts �
 #### Scenario: 归属待确认（无交易日历）
 
 - **WHEN** seam 返回 `isTradingDay === null`（周末/长假第 N 天/盘前/隔日补写）
-- **THEN** B2 显示待确认归属（附来源与 confidence），提交前要求一次显式确认；用户确认前 MUST NOT 落盘，MUST NOT 以系统日期替代
+- **THEN** B2 预填 T0 解析的最近期交易日（`value !== null` 时）；`value === null` 时 B2 留空并显示「交易日不可得」短提示，等待用户经月历显式选择；保存即显式提交该日期（无额外确认步），MUST NOT 以系统日期替代
 
 #### Scenario: 隔日补写
 

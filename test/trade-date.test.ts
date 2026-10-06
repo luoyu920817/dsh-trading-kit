@@ -9,7 +9,7 @@ import { resolveTradeDate } from '../src/data/trade-date.ts'
 import { getLimitReason } from '../src/data/limit-reason.ts'
 import { rateLimitDate } from '../src/data/date.ts'
 import { createTradeDateTool, renderTradeDateText } from '../src/tools/trade-date.ts'
-import { startDataStub, createTempDataRoot, createTestDeps, s7Payload, s5HistoryPayload } from './helpers/data-stub.ts'
+import { startDataStub, createTempDataRoot, createTestDeps, s7Payload, s5HistoryPayload, type S7StubRow } from './helpers/data-stub.ts'
 
 const OFF_SESSION = (): Date => new Date('2026-09-21T08:00:00Z') // 2026-09-21 周一盘后
 
@@ -274,7 +274,7 @@ describe('缓存毒化防护（owner 实测 bug 2026-10-06：List 缓存条目�
       // History：假期日（10-01..10-05）回显日期 + 空 list；交易日回显日期 + 数据
       if (req.path.includes('surgeLimitHistory')) {
         const compact = req.query.get('date') ?? ''
-        const rows = compact === '20260930' ? { '600000': { cause: '重组', first: '0931', last: '0931' } } : {}
+        const rows: Record<string, S7StubRow> = compact === '20260930' ? { '600000': { cause: '重组', first: '0931', last: '0931' } } : {}
         return { json: s7Payload(compact, rows) }
       }
       // List：市场休市 → 返回最近会话（09-30）的 52 只（此处 1 只模拟），无日期字段

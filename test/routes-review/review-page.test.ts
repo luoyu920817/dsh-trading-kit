@@ -71,10 +71,18 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).not.toContain('在 TDX 中打开标的')
   })
 
-  it('B2：日期输入 + 待确认态 + 保存前显式确认（checkbox）', () => {
+  it('B2：自绘月历组件（owner 2026-10-05：原生 date 上下箭头弃用）+ 状态行去冗余', () => {
     expect(REVIEW_HTML).toContain('id="rv-date"')
     expect(REVIEW_HTML).toContain('id="rv-trade-state"')
-    expect(REVIEW_HTML).toContain('归属待确认')
+    expect(REVIEW_HTML).not.toContain('type="date"') // 原生日历输入弃用（含其上下微调控件）
+    expect(REVIEW_HTML).toContain('id="rv-cal"')
+    expect(REVIEW_HTML).toContain('id="rv-cal-grid"')
+    expect(REVIEW_HTML).toContain('rv-cal-sel') // 选中日高亮
+    expect(REVIEW_HTML).toContain('id="rv-cal-clear"') // 清除 = 回到服务端自动归属
+    expect(REVIEW_HTML).toContain('calSetOpen') // 开合/外点收起布点
+    // owner 2026-10-05：状态行去冗余保持干净——日期可得时不朗读来源/待确认。
+    expect(REVIEW_HTML).not.toContain('归属待确认')
+    expect(REVIEW_HTML).not.toContain('查看日期：')
     // owner 2026-10-05：确认勾选框移除——预填最近期交易日，保存即显式提交。
     expect(REVIEW_HTML).not.toContain('id="rv-confirm-date"')
     expect(REVIEW_HTML).not.toContain('确认归属该交易日')

@@ -15,8 +15,9 @@
  * routePath, injectedAt }`；`writable === false`（C 层签字只读分支）时 B3 降级为
  * 禁用态 + 提示 DSH 侧写卡（spike 决策第 3 条：A 层在 TDX 内未验证存活）。
  *
- * 四区块（spec「四区块布局」）：B1 标的头部（代码+名称分层+标签+涨停原因+treeid）、
- * B2 日期（默认归属交易日+待确认显式确认）、B3 输入+保存+预留工具框（disabled +
+ * 四区块（spec「四区块布局」）：B1 标的头部（代码+名称分层+标签+涨停原因）、
+ * B2 日期（自绘月历组件：预填最近期交易日，可改选/清除——owner 2026-10-05 裁决
+ * 弃用原生 date 输入与「待确认」朗读文案）、B3 输入+保存+预留工具框（disabled +
  * tabindex="-1"）、B4 当日卡片（时间倒序+纯文本转义+复制 block 引用+warnings 展示）。
  */
 import { parseReviewParams } from './params.ts'
@@ -51,9 +52,30 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   .warnbox { background: #2a2410; border: 1px solid #7a6520; color: #e8d48a; padding: 5px 8px; margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; border-radius: 4px; }
   .tagline { margin-top: 8px; }
   .tag { display: inline-block; background: #333333; color: #ffa500; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 6px 4px 0; }
-  input[type="date"] { padding: 4px 6px; font-size: 13px; max-width: 100%; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; border-radius: 4px; color-scheme: dark; }
+  /* 自绘月历（owner 2026-10-05 裁决：弃用原生 date 输入——其上下微调控件不可用
+     且观感不符；月面板 = 选择器，不打标有卡日期。flex/grid 在 Chromium 81 可用，
+     仅 gap（84+）禁用，以 margin 间隔。） */
+  #rv-date-wrap { position: relative; display: inline-block; vertical-align: middle; }
+  #rv-date { padding: 4px 24px 4px 10px; font-size: 13px; width: 132px; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; border-radius: 4px; cursor: pointer; font-family: inherit; }
+  #rv-date:focus { outline: none; border-color: #c50e29; }
+  #rv-date-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #8a8a8a; font-size: 11px; pointer-events: none; }
+  #rv-cal { position: absolute; left: 0; top: calc(100% + 6px); z-index: 60; width: 252px; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px; padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6); }
+  .rv-cal-head { display: flex; align-items: center; margin-bottom: 6px; }
+  .rv-cal-head button { background: transparent; color: #cccccc; border: 1px solid #3a3a3a; border-radius: 4px; width: 24px; height: 24px; padding: 0; font-size: 13px; line-height: 1; cursor: pointer; margin: 0 2px; }
+  .rv-cal-head button:hover { background: #2a2a2a; color: #ffffff; }
+  #rv-cal-label { flex: 1; text-align: center; color: #e6e6e6; }
+  .rv-cal-week, .rv-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+  .rv-cal-week span { text-align: center; color: #777777; font-size: 11px; padding: 3px 0; }
+  .rv-cal-day { text-align: center; padding: 5px 0; color: #dddddd; cursor: pointer; border-radius: 4px; }
+  .rv-cal-day:hover { background: #2a2a2a; }
+  .rv-cal-out { color: #555555; }
+  .rv-cal-today { color: #ff7a45; }
+  .rv-cal-day.rv-cal-sel, .rv-cal-day.rv-cal-sel:hover { background: #c50e29; color: #ffffff; font-weight: 600; }
+  .rv-cal-foot { margin-top: 8px; text-align: right; }
+  .rv-cal-foot button { background: transparent; border: none; color: #8a8a8a; font-size: 12px; cursor: pointer; padding: 2px 0; }
+  .rv-cal-foot button:hover { color: #e6e6e6; }
   textarea { width: 100%; min-height: 84px; font-size: 13px; padding: 6px; resize: vertical; background: #1a1a1a; color: #e6e6e6; border: 1px solid #3a3a3a; border-radius: 4px; line-height: 1.6; }
-  textarea:focus, input[type="date"]:focus { outline: none; border-color: #c50e29; }
+  textarea:focus { outline: none; border-color: #c50e29; }
   button { padding: 5px 14px; font-size: 13px; background: #c50e29; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
   button:disabled { background: #3a3a3a; color: #777777; cursor: not-allowed; }
   button#rv-reserve, button.copy-btn { background: #333333; color: #ffa500; font-size: 12px; padding: 3px 8px; }
@@ -81,7 +103,22 @@ export const REVIEW_HTML = `<!DOCTYPE html>
 
 <section id="rv-b2">
   <label for="rv-date">交易日</label>
-  <input type="date" id="rv-date" value="">
+  <div id="rv-date-wrap">
+    <input type="text" id="rv-date" readonly placeholder="选择日期">
+    <span id="rv-date-icon">▾</span>
+    <div id="rv-cal" style="display:none">
+      <div class="rv-cal-head">
+        <button type="button" id="rv-cal-py" title="上一年">«</button>
+        <button type="button" id="rv-cal-pm" title="上一月">‹</button>
+        <span id="rv-cal-label">—</span>
+        <button type="button" id="rv-cal-nm" title="下一月">›</button>
+        <button type="button" id="rv-cal-ny" title="下一年">»</button>
+      </div>
+      <div class="rv-cal-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+      <div id="rv-cal-grid" class="rv-cal-grid"></div>
+      <div class="rv-cal-foot"><button type="button" id="rv-cal-clear">清除（回到自动归属）</button></div>
+    </div>
+  </div>
   <span id="rv-trade-state" class="muted"></span>
 </section>
 
@@ -213,17 +250,120 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   function renderTradeState() {
     var el = byId('rv-trade-state');
     if (currentCode === null) { el.textContent = ''; return; }
+    // owner 2026-10-05：状态行去冗余保持干净——输入框已展示日期，不再朗读
+    // 来源/待确认状态；仅交易日不可得（休市/盘前）时保留一行短提示。
     var td = lastLocal !== null ? lastLocal.tradeDate : null;
-    if (lastLocal !== null && lastLocal.dateSource === 'requested' && lastLocal.date) {
-      el.textContent = '查看日期：' + lastLocal.date;
-    } else if (td !== null && td !== undefined && td.value !== null && td.value !== undefined) {
-      if (td.isTradingDay === true) el.textContent = '归属交易日 ' + td.value + '（来源 ' + td.source + '）';
-      else el.textContent = '归属待确认：' + td.value + '（来源 ' + td.source + '）——可直接保存，或自行修改日期';
-    } else {
-      el.textContent = '归属待确认：交易日不可得（可能为休市日/盘前）——请在 B2 显式选择最近交易日（如 2026-09-30）';
+    var explicit = lastLocal !== null && lastLocal.dateSource === 'requested' && lastLocal.date;
+    if (explicit || (td !== null && td !== undefined && td.value !== null && td.value !== undefined)) {
+      el.textContent = '';
+      return;
     }
+    el.textContent = '交易日不可得（休市/盘前）——可在上方日历选择最近交易日';
     // owner 2026-10-05：确认勾选框移除——页面预填 T0 解析出的最近期交易日，
     // 保存即显式提交该日期（归属证据 = 数据源会话集合比对，非系统日历猜测）。
+  }
+
+  // ── 自绘月历（owner 2026-10-05 裁决：替换原生日历输入——深色月面板、
+  // 年/月跳转、周一为首列、选中高亮；「清除」= 清空显式选择，回到服务端
+  // 自动归属日。仅为日期选择器，不涉及有卡日期数据。）─────────────────────
+  var calOpen = false;
+  var calView = null; // 面板当前展示 {y, m}（m: 0-11）
+
+  function pad2(n) { return n < 10 ? '0' + n : String(n); }
+
+  function parseYmd(v) {
+    var m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(v === null || v === undefined ? '' : v);
+    if (m === null) return null;
+    return { y: Number(m[1]), m: Number(m[2]) - 1, d: Number(m[3]) };
+  }
+
+  function isoOf(y, m, d) {
+    return String(y) + '-' + pad2(m + 1) + '-' + pad2(d);
+  }
+
+  function calRender() {
+    byId('rv-cal-label').textContent = String(calView.y) + ' 年 ' + pad2(calView.m + 1) + ' 月';
+    var grid = byId('rv-cal-grid');
+    grid.textContent = '';
+    var selIso = parseYmd(byId('rv-date').value) !== null ? byId('rv-date').value : null;
+    var now = new Date();
+    var nowIso = isoOf(now.getFullYear(), now.getMonth(), now.getDate());
+    var startDow = (new Date(calView.y, calView.m, 1).getDay() + 6) % 7; // 周一首列
+    for (var i = 0; i < 42; i++) {
+      var d = new Date(calView.y, calView.m, 1 - startDow + i);
+      var iso = isoOf(d.getFullYear(), d.getMonth(), d.getDate());
+      var cell = document.createElement('span');
+      cell.className = 'rv-cal-day' + (d.getMonth() !== calView.m ? ' rv-cal-out' : '');
+      cell.textContent = String(d.getDate());
+      if (iso === selIso) cell.className += ' rv-cal-sel';
+      if (iso === nowIso) cell.className += ' rv-cal-today';
+      (function (isoDate) {
+        cell.addEventListener('click', function () {
+          setDateValue(isoDate);
+          calSetOpen(false);
+        });
+      })(iso);
+      grid.appendChild(cell);
+    }
+  }
+
+  function calSetOpen(open) {
+    if (open === calOpen) return;
+    if (open) {
+      var cur = parseYmd(byId('rv-date').value);
+      if (cur !== null) calView = { y: cur.y, m: cur.m };
+      else { var now = new Date(); calView = { y: now.getFullYear(), m: now.getMonth() }; }
+      calRender();
+      byId('rv-cal').style.display = '';
+    } else {
+      byId('rv-cal').style.display = 'none';
+    }
+    calOpen = open;
+  }
+
+  function setDateValue(v) {
+    byId('rv-date').value = v;
+    applyDateChange();
+  }
+
+  function applyDateChange() {
+    var v = byId('rv-date').value;
+    datePicked = v !== '';
+    currentDate = datePicked ? v : null;
+    if (pendingOwner === null) hideOwnerConfirm();
+    loadLocal(false);
+  }
+
+  function wireCalendar() {
+    byId('rv-date').addEventListener('click', function () { calSetOpen(!calOpen); });
+    byId('rv-cal-py').addEventListener('click', function () { calView.y -= 1; calRender(); });
+    byId('rv-cal-pm').addEventListener('click', function () {
+      calView.m -= 1;
+      if (calView.m < 0) { calView.m = 11; calView.y -= 1; }
+      calRender();
+    });
+    byId('rv-cal-nm').addEventListener('click', function () {
+      calView.m += 1;
+      if (calView.m > 11) { calView.m = 0; calView.y += 1; }
+      calRender();
+    });
+    byId('rv-cal-ny').addEventListener('click', function () { calView.y += 1; calRender(); });
+    byId('rv-cal-clear').addEventListener('click', function () {
+      setDateValue('');
+      calSetOpen(false);
+    });
+    document.addEventListener('click', function (ev) {
+      if (!calOpen) return;
+      var node = ev.target;
+      while (node !== null && node !== undefined && node !== document) {
+        if (node === byId('rv-date-wrap')) return; // 面板内/字段上的点击不收起
+        node = node.parentNode;
+      }
+      calSetOpen(false);
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (calOpen && (ev.key === 'Escape' || ev.keyCode === 27)) calSetOpen(false);
+    });
   }
 
   // ── B4 渲染（时间倒序 + 纯文本转义 + 复制 block 引用）───────────────────
@@ -583,13 +723,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     }
   });
   byId('rv-save').addEventListener('click', submit);
-  byId('rv-date').addEventListener('change', function () {
-    var v = byId('rv-date').value;
-    datePicked = v !== '';
-    currentDate = datePicked ? v : null;
-    if (pendingOwner === null) hideOwnerConfirm();
-    loadLocal(false);
-  });
+  byId('rv-date').addEventListener('change', applyDateChange);
+  wireCalendar();
   byId('rv-confirm-owner').addEventListener('click', function () {
     // 一次显式确认：归属切到新标的；确认后保存即可提交（服务端仍按 clientRequestId 幂等）。
     pendingOwner = null;
