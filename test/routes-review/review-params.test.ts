@@ -92,3 +92,48 @@ describe('path 段形态细节', () => {
     expect(parseReviewParams('#600000', '?date=2026-09-24', ROUTE + '/600001', ROUTE).resolvedForm).toBe('hash')
   })
 })
+
+describe('显式市场前缀/后缀（owner 2026-10-06：000688=科创50(沪)/国城矿业(深) 同码不同品种）', () => {
+  it('#sh000688 → code 000688 + market sh', () => {
+    const r = parseReviewParams('#sh000688', '', ROUTE, ROUTE)
+    expect(r.code).toBe('000688')
+    expect(r.market).toBe('sh')
+    expect(r.valid).toBe(true)
+  })
+
+  it('前缀大小写不敏感：#SZ000002 → market sz', () => {
+    const r = parseReviewParams('#SZ000002', '', ROUTE, ROUTE)
+    expect(r.code).toBe('000002')
+    expect(r.market).toBe('sz')
+  })
+
+  it('后缀形态 #000688.SH → market sh', () => {
+    const r = parseReviewParams('#000688.SH', '', ROUTE, ROUTE)
+    expect(r.code).toBe('000688')
+    expect(r.market).toBe('sh')
+  })
+
+  it('无前缀 → market null（维持股票惯例解析现状，不受影响）', () => {
+    const r = parseReviewParams('#000688', '', ROUTE, ROUTE)
+    expect(r.code).toBe('000688')
+    expect(r.market).toBeNull()
+  })
+
+  it('query 形态 ?code=sh000688 → market sh', () => {
+    const r = parseReviewParams('', '?code=sh000688', ROUTE, ROUTE)
+    expect(r.code).toBe('000688')
+    expect(r.market).toBe('sh')
+  })
+
+  it('path 段形态 /review/sh000688 → market sh', () => {
+    const r = parseReviewParams('', '', ROUTE + '/sh000688', ROUTE)
+    expect(r.code).toBe('000688')
+    expect(r.market).toBe('sh')
+  })
+
+  it('位数非法（#sh00068）→ invalid，不猜测', () => {
+    const r = parseReviewParams('#sh00068', '', ROUTE, ROUTE)
+    expect(r.valid).toBe(false)
+    expect(r.code).toBeNull()
+  })
+})

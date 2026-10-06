@@ -37,6 +37,12 @@ export interface ReviewParamsResult {
   raw: string | null
   /** 归一结果（去壳后恰 6 位数字）；非法/缺失为 null。 */
   code: string | null
+  /**
+   * 显式市场（owner 2026-10-06 追授：`sh|sz|bj` 前缀或 `.sh|.sz|.bj` 后缀，大小写
+   * 不敏感——中证指数段 000xxx 挂沪市与深市股票同码不同品种，市场号只能由 URL 提供）；
+   * 未提供为 null = 维持既有按前缀惯例解析的现状。
+   */
+  market: 'sh' | 'sz' | 'bj' | null
   valid: boolean
 }
 
@@ -97,17 +103,28 @@ export function parseReviewParams(
     return safeDecode(seg)
   }
 
-  // 归一化（去壳不补全）：trim → 去市场前/后缀 → 余下须恰为 6 位数字（前导零保留）。
-  function normalizeLite(raw: string): string | null {
+  // 归一化（去壳不补全）：trim → 捕获市场前/后缀（大小写不敏感）→ 余下须恰为 6 位
+  // 数字（前导零保留）。市场为「显式提供才非 null」——同码不同品种（如 000688=
+  // 科创50(沪)/国城矿业(深)）的区分只能靠 owner 手配 URL 显式给出。
+  function normalizeLite(raw: string): { code: string | null; market: string | null } {
     var v = raw
     try {
       v = v.replace(/^\s+|\s+$/g, '')
     } catch (e) {
       v = raw
     }
-    v = v.replace(/^(sh|sz|bj)/i, '')
-    v = v.replace(/\.(sh|sz|bj)$/i, '')
-    return /^\d{6}$/.test(v) ? v : null
+    var market = null
+    var m = /^(sh|sz|bj)/i.exec(v)
+    if (m !== null) {
+      market = m[1].toLowerCase()
+      v = v.slice(m[1].length)
+    }
+    var s = /\.(sh|sz|bj)$/i.exec(v)
+    if (s !== null) {
+      market = s[1].toLowerCase()
+      v = v.slice(0, v.length - s[0].length)
+    }
+    return { code: /^\d{6}$/.test(v) ? v : null, market: market }
   }
 
   var hashRaw = hash.charAt(0) === '#' ? hash.slice(1) : hash
@@ -127,14 +144,15 @@ export function parseReviewParams(
     raw = pathRaw
   }
 
-  var code = raw !== null ? normalizeLite(raw) : null
+  var normalized = raw !== null ? normalizeLite(raw) : { code: null, market: null }
   return {
     hashRaw: hashRaw,
     queryRaw: queryRaw,
     pathRaw: pathRaw,
     resolvedForm: resolvedForm,
     raw: raw,
-    code: code,
-    valid: code !== null,
+    code: normalized.code,
+    market: normalized.market as 'sh' | 'sz' | 'bj' | null,
+    valid: normalized.code !== null,
   }
 }

@@ -50,6 +50,7 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   #rv-code-line { display: flex; flex-wrap: wrap; align-items: center; }
   #rv-code { font-size: 14px; font-weight: 600; color: #e6e6e6; background: #242424; border: 1px solid #3a3a3a; padding: 3px 9px; border-radius: 999px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; margin-right: 10px; }
   #rv-name { color: #ff4d4f; font-size: 20px; font-weight: 700; letter-spacing: 0.5px; margin-right: 10px; }
+  #rv-market-tag { color: #8a8a8a; font-size: 11px; margin-right: 8px; border: 1px solid #3a3a3a; border-radius: 3px; padding: 1px 5px; }
   .muted { color: #8a8a8a; font-size: 12px; }
   #rv-concepts { margin-top: 8px; }
   #rv-limit { margin-top: 6px; }
@@ -114,6 +115,7 @@ export const REVIEW_HTML = `<!DOCTYPE html>
 <section id="rv-b1">
   <div id="rv-code-line">
     <span id="rv-code">—</span>
+    <span id="rv-market-tag"></span>
     <span id="rv-name" class="muted"></span>
   </div>
   <div id="rv-quote" class="quote-grid">
@@ -181,6 +183,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   var mode = 'idle';
   var currentCode = null;        // 归一后的当前标的（null = 无有效标的）
   var currentRaw = null;         // 原始取值（排障展示）
+  var currentMarket = null;      // 显式市场前缀（sh|sz|bj|null）——同码不同品种区分（owner 2026-10-06）
   var currentDate = null;        // 正在查看的交易日（YYYY-MM-DD 或 null）
   var datePicked = false;        // 用户显式选择过日期 = 归属已确认
   var nameLocal = null;          // 本地段名称层 {value, nameSource}
@@ -196,6 +199,18 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
 
   function byId(id) { return document.getElementById(id); }
   function trim(v) { return v.replace(/^\\s+|\\s+$/g, ''); }
+
+  // ── 指数/锚点形态判定（owner 2026-10-06：市场信息只能由 URL 显式提供——中证指数
+  // 段 000xxx 挂沪市，与深市股票 000xxx 同码不同品种；无前缀维持股票惯例解析）。
+  // 仅在显式 market='sh' 时判定指数：沪市无 0 开头股票（000xxx 全为中证指数）、
+  // 999999=上证指数、880xxx=通达信自制指标（板块文件按沪市存）。────────────────
+  function indexLike() {
+    if (currentCode === null || currentMarket !== 'sh') return false;
+    if (currentCode === '999999') return true;
+    if (/^000/.test(currentCode)) return true;
+    if (/^88/.test(currentCode)) return true;
+    return false;
+  }
 
   function apiUrl(path, params) {
     var url = basePath + path;
@@ -248,6 +263,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (currentCode !== null) codeEl.textContent = currentCode;
     else if (currentRaw !== null && currentRaw !== '') codeEl.textContent = '收到「' + currentRaw + '」';
     else codeEl.textContent = '—';
+    var marketEl = byId('rv-market-tag');
+    marketEl.textContent = currentMarket !== null ? currentMarket.toUpperCase() : '';
     // owner 2026-10-05：页面本身运行在 TDX 内，跳转 TDX 的联动链接移除
     //（spike 决策①的 treeid 通道保留在文档与后续场景：页面外联动时再启用）。
     // 标签/涨停原因 = enrich 段渲染内容：同一标的的本地段静默回读（保存/编辑/删除后）
@@ -256,8 +273,9 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       byId('rv-concepts').textContent = '';
       byId('rv-limit').textContent = '';
     }
-    byId('rv-organize').disabled = !writable || currentCode === null; // 整理按钮随标的/写通道联动
+    byId('rv-organize').disabled = !writable || currentCode === null || indexLike();
     updateNameLine();
+    if (indexLike()) byId('rv-name').textContent = '指数/锚点标的——复盘卡不适用';
   }
 
   // ── 行情四格（owner 2026-10-05 裁决：自参考页迁移；数据 = /api/enrich 的 quote 段。
@@ -629,6 +647,18 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       renderCards([]);
       return;
     }
+    if (indexLike()) {
+      // owner 2026-10-06：指数/锚点态——不读卡（指数无卡片）、不发 enrich（避免同码
+      // 深市股票的错配数据与无谓预算），显式标注不适用。
+      setMode('empty');
+      renderB1();
+      byId('rv-trade-state').textContent = '';
+      byId('rv-warnings').textContent = '';
+      byId('rv-cards').textContent = '';
+      byId('rv-empty').textContent = '指数/锚点标的（' + currentCode + '）——复盘卡按「股票 × 交易日」组织，指数不适用。如要查看该代码的股票，请在 URL 中改用市场前缀（如 #sz000688）。';
+      renderQuote(null);
+      return;
+    }
     if (!silent) setMode('loading');
     fetchJson(apiUrl('/review/api/local', { code: currentCode, date: currentDate })).then(function (r) {
       if (r.status !== 200) {
@@ -742,7 +772,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   function loadEnrich() {
-    if (currentCode === null) return;
+    if (currentCode === null || indexLike()) return; // 指数态不取数（避免同码错配）
     enrichGen += 1; // 代际推进：旧响应到达即丢弃
     if (enrichController !== null) {
       try { enrichController.abort(); } catch (e) { /* 忽略 */ }
@@ -771,9 +801,10 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   // ── 上下文切换（hash / query / path 段；无刷新）────────────────────────────
-  function switchContext(code, raw) {
+  function switchContext(code, raw, market) {
     currentCode = code;
     currentRaw = raw;
+    currentMarket = market === undefined ? null : market;
     enrichGen += 1;
     if (enrichController !== null) {
       try { enrichController.abort(); } catch (e) { /* 忽略 */ }
@@ -791,7 +822,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     loadEnrich();
   }
 
-  function onNavTargetChange(code, raw) {
+  function onNavTargetChange(code, raw, market) {
     var inputEl = byId('rv-input');
     var hasDraft = trim(inputEl.value) !== '';
     if (hasDraft && draftOwnerCode !== null && code !== null && draftOwnerCode !== code) {
@@ -802,7 +833,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       pendingOwner = null;
       hideOwnerConfirm();
     }
-    switchContext(code, raw);
+    switchContext(code, raw, market);
   }
 
   function currentParams() {
@@ -812,8 +843,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   function applyParams() {
     var p = currentParams();
     var code = p.valid ? p.code : null;
-    if (code !== null && code === currentCode) return; // 同标的：不重载
-    onNavTargetChange(code, p.raw);
+    if (code !== null && code === currentCode && p.market === currentMarket) return; // 同标的同市场：不重载
+    onNavTargetChange(code, p.raw, p.market);
   }
 
   // ── 提交（B3；clientRequestId 幂等 + 防重 + 失败保留输入）─────────────────
@@ -900,7 +931,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   // ── B3 整理按钮（owner 2026-10-06 追授）：登记意图 + 复制固定指令——agent 由
   // DSH 会话发送触发（页面与 agent 无通道是既定边界；指令模板在服务端）。──────
   byId('rv-organize').addEventListener('click', function () {
-    if (!writable || currentCode === null) return;
+    if (!writable || currentCode === null || indexLike()) return;
     var btn = byId('rv-organize');
     btn.disabled = true;
     fetch(basePath + '/review/api/organize', {
@@ -944,6 +975,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   if (initial.valid) {
     currentCode = initial.code;
     currentRaw = initial.raw;
+    currentMarket = initial.market;
   } else {
     currentCode = null;
     currentRaw = initial.raw;

@@ -69,6 +69,11 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     // owner 2026-10-05：本地回读（保存/编辑/删除后）不清空 enrich 渲染内容（按标的归属保留）。
     expect(REVIEW_HTML).toContain('enrichRenderedFor !== currentCode')
     expect(REVIEW_HTML).toContain('enrichRenderedFor = currentCode')
+    // owner 2026-10-06：显式市场前缀 + 指数/锚点显式态（000688=科创50(沪)/国城矿业(深)）。
+    expect(REVIEW_HTML).toContain('id="rv-market-tag"')
+    expect(REVIEW_HTML).toContain('indexLike()')
+    expect(REVIEW_HTML).toContain('p.market === currentMarket')
+    expect(REVIEW_HTML).toContain('复盘卡不适用')
     // 行情四格（owner 2026-10-05：自参考页 同花顺涨跌停原因.html 迁移——S9 快照）。
     expect(REVIEW_HTML).toContain('id="rv-quote"')
     expect(REVIEW_HTML).toContain('id="rv-qp-price"')
