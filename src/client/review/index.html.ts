@@ -56,7 +56,8 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   .tagline { margin-top: 8px; }
   .tag { display: inline-block; background: #333333; color: #ffa500; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 6px 4px 0; }
   /* 行情四格（owner 2026-10-05 裁决：自参考页 同花顺涨跌停原因.html 迁移——现价着色/
-     流通市值/总市值/流通股本；grid 四列、窄面板折 2×2；数据 = S9 行情快照。） */
+     流通市值/总市值/流通股本；grid 固定一行四列（owner 同日追授：窄面板不折叠——
+     2×2 单列过宽）；数据 = S9 行情快照。） */
   .quote-grid { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 10px; row-gap: 10px; }
   .quote-cell { min-width: 0; padding-left: 12px; border-left: 1px solid #262626; }
   .quote-cell:first-child { padding-left: 0; border-left: none; }
@@ -65,10 +66,6 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   .qp-value { color: #e6e6e6; font-size: 13px; font-weight: 600; white-space: nowrap; }
   .qp-value.up { color: #ff4d4f; }
   .qp-value.down { color: #4dabf7; }
-  @media (max-width: 500px) {
-    .quote-grid { grid-template-columns: repeat(2, 1fr); }
-    .quote-cell:nth-child(odd) { padding-left: 0; border-left: none; }
-  }
   /* 自绘月历（owner 2026-10-05 裁决：弃用原生 date 输入——其上下微调控件不可用
      且观感不符；月面板 = 选择器，不打标有卡日期。flex/grid 在 Chromium 81 可用，
      仅 gap（84+）禁用，以 margin 间隔。） */
