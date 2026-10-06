@@ -102,10 +102,12 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).not.toContain('确认归属该交易日')
   })
 
-  it('B3：输入 + 保存 + Ctrl+Enter + isComposing 忽略 + 提交中防重文案 + 预留区 disabled+tabindex=-1', () => {
+  it('B3：输入 + 回车保存（Shift+Enter 换行，保存按钮移除——owner 2026-10-06）+ isComposing 忽略 + 提交中防重文案', () => {
     expect(REVIEW_HTML).toContain('id="rv-input"')
-    expect(REVIEW_HTML).toContain('id="rv-save"')
-    expect(REVIEW_HTML).toContain('Ctrl+Enter')
+    expect(REVIEW_HTML).not.toContain('id="rv-save"') // 独立保存按钮移除——回车即保存
+    expect(REVIEW_HTML).toContain('Enter 保存，Shift+Enter 换行')
+    expect(REVIEW_HTML).toContain('ev.shiftKey') // Shift+Enter 恒为换行
+    expect(REVIEW_HTML).not.toContain('工具框：') // 工具框标签移除（owner 2026-10-06）
     expect(REVIEW_HTML).toContain('isComposing')
     expect(REVIEW_HTML).toContain("'compositionstart'")
     expect(REVIEW_HTML).toContain("'compositionend'")
@@ -158,12 +160,12 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('DSH 会话侧写卡')
   })
 
-  it('焦点顺序：B2 日期输入在 B3 输入框之前、B3 输入框在保存按钮之前（预留区 tabindex=-1 跳过）', () => {
+  it('焦点顺序：B2 日期输入在 B3 输入框之前、B3 输入框在整理按钮之前（保存按钮已移除）', () => {
     const dateAt = REVIEW_HTML.indexOf('id="rv-date"')
     const inputAt = REVIEW_HTML.indexOf('id="rv-input"')
-    const saveAt = REVIEW_HTML.indexOf('id="rv-save"')
+    const organizeAt = REVIEW_HTML.indexOf('id="rv-organize"')
     expect(dateAt).toBeLessThan(inputAt)
-    expect(inputAt).toBeLessThan(saveAt)
+    expect(inputAt).toBeLessThan(organizeAt)
   })
 
   it('窄视口 320px：无横向滚动的样式约束（box-sizing / overflow-wrap / 100% 宽）', () => {

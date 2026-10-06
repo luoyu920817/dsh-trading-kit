@@ -154,11 +154,11 @@ B1 SHALL 显示标的代码与名称（三层兜底）；**页面不设「复盘
 #### Scenario: 窄视口可用（可断言值）
 
 - **WHEN** 页面在窄视口（如 320 px 宽，TDX 内嵌页宽度）下渲染
-- **THEN** 无横向滚动（`documentElement.scrollWidth <= clientWidth`）；输入框与保存动作**可见且可点**（不为 `display:none` / `visibility:hidden` / 被其它元素遮挡）；主链路（输入 → 保存 → 卡片出现在 B4 顶部）全程可用
+- **THEN** 无横向滚动（`documentElement.scrollWidth <= clientWidth`）；输入框**可见且可点**（不为 `display:none` / `visibility:hidden` / 被其它元素遮挡）；主链路（输入 → 回车保存 → 卡片出现在 B4 顶部）全程可用
 
 ### Requirement: 交互态与输入法
 
-页面 SHALL 为输入主链路提供可区分的五种状态：`idle`（可输入）、`loading`（本地段加载中，保存禁用）、`submitting`（提交中，保存禁用 + 文案「保存中」）、`error`（显式原因 + 输入保留 + 可重试）、`empty`（无标的或该日无卡片；文案含原始取值/期望格式/TDX 指引）。`Ctrl+Enter` 提交在输入法组合期（`KeyboardEvent.isComposing === true`）MUST 被忽略。B3 的「整理」按钮 SHALL 在无标的或写通道不可用时为 `disabled`。
+页面 SHALL 为输入主链路提供可区分的五种状态：`idle`（可输入）、`loading`（本地段加载中，状态行「加载中」）、`submitting`（提交中，状态行「保存中」；重复回车不产生第二次请求——2026-10-06 修订：独立保存按钮移除，防重由 mode 门禁承载）、`error`（显式原因 + 输入保留 + 可重试）、`empty`（无标的或该日无卡片；文案含原始取值/期望格式/TDX 指引）。**回车（Enter）提交、Shift+Enter 换行**（owner 2026-10-06 裁决：独立保存按钮移除）；`Enter` 提交在输入法组合期（`KeyboardEvent.isComposing === true`）MUST 被忽略。B3 的「整理」按钮 SHALL 在无标的或写通道不可用时为 `disabled`。
 
 #### Scenario: 提交中防重与态可见
 
@@ -167,13 +167,13 @@ B1 SHALL 显示标的代码与名称（三层兜底）；**页面不设「复盘
 
 #### Scenario: 输入法组合期不误提交
 
-- **WHEN** 用户在中文输入法组合期按下 `Ctrl+Enter`（`isComposing === true`）
-- **THEN** 不触发提交；仅在 `compositionend` 之后的 `Ctrl+Enter` 才提交
+- **WHEN** 用户在中文输入法组合期按下 `Enter`（`isComposing === true`）
+- **THEN** 不触发提交、不误换行（交由输入法确认组合）；仅在 `compositionend` 之后的 `Enter` 才提交；`Shift+Enter` 恒为换行
 
 #### Scenario: 整理按钮不抢焦点主链
 
 - **WHEN** 用户以 Tab 遍历页面焦点
-- **THEN** 焦点顺序为 B2 日期 → B3 输入框 → 保存按钮 → 整理按钮；无标的或写通道不可用时整理按钮为 `disabled`
+- **THEN** 焦点顺序为 B2 日期 → B3 输入框 → 整理按钮；无标的或写通道不可用时整理按钮为 `disabled`
 
 #### Scenario: 空态文案可排障
 
@@ -370,7 +370,7 @@ B4 卡片头部 SHALL 展示 `writtenAt` 时间与动作按钮；**锚点 id 文
 
 ### Requirement: B3 工具框整理动作（owner 2026-10-06 追授）
 
-B3 工具框 SHALL 提供「整理」动作按钮（替代原预留占位按钮）：点击后经 `POST /review/api/organize`（写凭据同写卡）登记当前标的与日期的整理意图，并把服务端返回的**固定整理指令**复制进剪贴板；agent 的实际执行 SHALL 由用户在 DSH 会话发送该指令触发——MUST NOT 由插件自建 agent 运行、MUST NOT 另造绕过会话的执行路径（沿 review-loop 草案纪律；DSH 会话与复盘页之间无推送通道是本形态的既定边界）。指令模板 SHALL 为服务端单一事实源（含标的、日期与「研究辅助、不构成投资建议」定位），页面零拼接。按钮 SHALL 在无标的或写通道不可用时禁用。
+B3 工具框 SHALL 提供「整理」动作按钮（替代原预留占位按钮）：点击后经 `POST /review/api/organize`（写凭据同写卡）登记当前标的与日期的整理意图，并把服务端返回的**固定整理指令**复制进剪贴板；agent 的实际执行 SHALL 由用户在 DSH 会话发送该指令触发——MUST NOT 由插件自建 agent 运行、MUST NOT 另造绕过会话的执行路径（沿 review-loop 草案纪律；DSH 会话与复盘页之间无推送通道是本形态的既定边界）。指令模板 SHALL 为服务端单一事实源（含标的、日期与「研究辅助、不构成投资建议」定位），页面零拼接。按钮 SHALL 在无标的或写通道不可用时禁用。工具框不展示「工具框」字样标签（owner 2026-10-06：仅呈现按钮本身）。
 
 #### Scenario: 点击登记并复制指令
 
@@ -408,11 +408,11 @@ B3 工具框 SHALL 提供「整理」动作按钮（替代原预留占位按钮�
 
 ### Requirement: 输入与提交
 
-B3 SHALL 提供单输入框与保存动作，并支持 `Ctrl+Enter` 提交（组合期忽略，见「交互态与输入法」）；提交成功后 SHALL 清空输入框、新卡片出现在 B4 顶部；提交进行中 SHALL 防止重复提交（不产生第二张卡片，且前端防重 + 服务端 `clientRequestId` 双重保障）；提交失败 SHALL 保留输入内容并允许重试（重试复用同一 `clientRequestId`）。
+B3 SHALL 提供单输入框，**回车（Enter）即保存**（无独立保存按钮——owner 2026-10-06 裁决），`Shift+Enter` 为换行；提交在组合期忽略（见「交互态与输入法」）；提交成功后 SHALL 清空输入框、新卡片出现在 B4 顶部；提交进行中 SHALL 防止重复提交（不产生第二张卡片，且前端防重 + 服务端 `clientRequestId` 双重保障）；提交失败 SHALL 保留输入内容并允许重试（重试复用同一 `clientRequestId`）。
 
 #### Scenario: 提交成功
 
-- **WHEN** 输入内容后点击保存（或按 Ctrl+Enter）
+- **WHEN** 输入内容后按回车（Enter）
 - **THEN** 输入框清空，B4 顶部出现新卡片
 
 #### Scenario: 重复提交防护

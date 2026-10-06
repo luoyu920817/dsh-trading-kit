@@ -188,6 +188,7 @@
   - 验收：spec「输入与提交」与「交互态与输入法」场景
   - 依赖：2.1、1.12（后端幂等）
   - 登记（2026-09-27，路由/前端线）：Ctrl+Enter 提交（isComposing + compositionstart/end 双保险，组合期忽略）；提交中防重（submitting 态不重发）；失败保留输入并复用同一 clientRequestId 重试（服务端按文档+id 幂等返回 duplicate）；成功清空输入、新卡片出现在 B4 顶部。
+  - 修订登记（2026-10-06，owner 裁决「不需要显示的保存按钮 回车默认保存 shift 回车 换行」）：**独立保存按钮移除**——回车（Enter）即保存（组合期忽略不变，Ctrl/Cmd+Enter 兼容保留），`Shift+Enter` 恒为换行；防重改由 mode 门禁承载（submit 首行检查，submitting/loading 拒重发）；占位符改为「Enter 保存，Shift+Enter 换行」。spec「输入与提交」「交互态与输入法」两需求已同步修订。
 - [x] 4.5 B4：卡片时间倒序渲染、纯文本转义、复制 block 引用、**`warnings: string[]` 显式展示（B4 上方；字段名统一为 `warnings`，无 `storeWarnings[]` 别名）**
   - 产物：B4 组件逻辑
   - 验收：spec「卡片回显与引用」「多命中文档的显式告警」场景；告警展示读取 `warnings`（结构断言见 6.3⑨）

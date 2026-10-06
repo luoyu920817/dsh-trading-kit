@@ -150,12 +150,9 @@ export const REVIEW_HTML = `<!DOCTYPE html>
 </section>
 
 <section id="rv-b3">
-  <textarea id="rv-input" placeholder="盘面观察 / 操作思路…（Ctrl+Enter 保存）"></textarea>
-  <div>
-    <button type="button" id="rv-save">保存</button>
-    <span id="rv-status" class="muted"></span>
-  </div>
-  <div class="muted">工具框：<button type="button" id="rv-organize" disabled title="登记当前标的的整理意图并复制指令——到 DSH 会话粘贴发送">整理</button><span id="rv-organize-state" class="muted"></span></div>
+  <textarea id="rv-input" placeholder="盘面观察 / 操作思路…（Enter 保存，Shift+Enter 换行）"></textarea>
+  <div><span id="rv-status" class="muted"></span></div>
+  <div><button type="button" id="rv-organize" disabled title="登记当前标的的整理意图并复制指令——到 DSH 会话粘贴发送">整理</button></div>
   <div id="rv-readonly-hint" class="warnbox" style="display:none">写卡不可用：A 层认证未生效——请在 DSH 会话侧写卡，或先经登录 URL 完成两步登录。</div>
 </section>
 
@@ -223,10 +220,9 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
 
   function setMode(next, message) {
     mode = next;
-    var save = byId('rv-save');
-    if (next === 'submitting') { save.disabled = true; setStatus('保存中…'); return; }
-    if (next === 'loading') { save.disabled = true; setStatus('加载中…'); return; }
-    save.disabled = !writable;
+    // owner 2026-10-06：独立保存按钮移除——提交由回车承载，防重由 mode 门禁（submit 首行检查）。
+    if (next === 'submitting') { setStatus('保存中…'); return; }
+    if (next === 'loading') { setStatus('加载中…'); return; }
     if (next === 'error') setStatus(message || '出错');
     else setStatus('');
   }
@@ -891,14 +887,14 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   inputEl.addEventListener('compositionstart', function () { composing = true; });
   inputEl.addEventListener('compositionend', function () { composing = false; });
   inputEl.addEventListener('keydown', function (ev) {
-    if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'Enter' || ev.keyCode === 10)) {
-      // 输入法组合期 MUST 忽略（isComposing / composition 标记双保险）。
-      if (composing || ev.isComposing === true) return;
-      ev.preventDefault();
-      submit();
-    }
+    if (ev.key !== 'Enter' && ev.keyCode !== 10) return;
+    // 输入法组合期 MUST 忽略（isComposing / composition 标记双保险——交由输入法确认组合）。
+    if (composing || ev.isComposing === true) return;
+    if (ev.shiftKey) return; // Shift+Enter = 换行（默认行为，不拦截）
+    // owner 2026-10-06：回车即保存（独立保存按钮移除）；Ctrl/Cmd+Enter 仍兼容保存。
+    ev.preventDefault();
+    submit();
   });
-  byId('rv-save').addEventListener('click', submit);
   byId('rv-date').addEventListener('change', applyDateChange);
   wireCalendar();
   // ── B3 整理按钮（owner 2026-10-06 追授）：登记意图 + 复制固定指令——agent 由
@@ -939,7 +935,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   // writable=false（A 层未生效）：仅保存禁用；输入框保持可编辑（草稿保留，
   // owner 2026-10-05 反馈「输入框无法点击进入」——TDX 免登录读态下仍可先写）。
   if (!writable) {
-    byId('rv-save').disabled = true;
+    byId('rv-organize').disabled = true; // 回车提交由 submit() 的 writable 门禁静默拒绝
     byId('rv-readonly-hint').style.display = '';
   }
 
