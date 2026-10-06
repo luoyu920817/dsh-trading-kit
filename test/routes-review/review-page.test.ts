@@ -66,6 +66,16 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('id="rv-limit"')
     expect(REVIEW_HTML).toContain('涨停原因（点击展开）') // 默认收起可展开（owner 2026-10-05）
     expect(REVIEW_HTML).toContain('id="rv-concepts"')
+    // 行情四格（owner 2026-10-05：自参考页 同花顺涨跌停原因.html 迁移——S9 快照）。
+    expect(REVIEW_HTML).toContain('id="rv-quote"')
+    expect(REVIEW_HTML).toContain('id="rv-qp-price"')
+    expect(REVIEW_HTML).toContain('id="rv-qp-ltsz"')
+    expect(REVIEW_HTML).toContain('id="rv-qp-zsz"')
+    expect(REVIEW_HTML).toContain('id="rv-qp-ltgb"')
+    expect(REVIEW_HTML).toContain('流通市值')
+    expect(REVIEW_HTML).toContain('流通股本')
+    expect(REVIEW_HTML).toContain('.qp-value.up') // 涨跌幅着色（涨红/跌蓝）
+    expect(REVIEW_HTML).toContain('亿股') // 股本换算口径
     // owner 2026-10-05：treeid 链接移除（页面本身在 TDX 内，无需联动按钮）。
     expect(REVIEW_HTML).not.toContain('id="rv-treeid"')
     expect(REVIEW_HTML).not.toContain('在 TDX 中打开标的')

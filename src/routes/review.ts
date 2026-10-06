@@ -94,8 +94,24 @@ export interface ReviewLocalNameView {
 export interface ReviewConceptView {
   available: boolean
   labels: string[]
-  /** T2/S8 附带名称（层② 反查的同一出口；路由层不消费此字段）。 */
+  /** T2/S8 附带名称（层② 反查的同一出口；enrich 名称段消费）。 */
   name: string | null
+  detail: string | null
+}
+
+/** `/api/enrich` 行情四格段（S9 快照；available=false 时数值字段全 null + detail 带原因——MUST NOT 用 0 冒充）。 */
+export interface ReviewQuoteView {
+  available: boolean
+  /** 现价（元）。 */
+  price: number | null
+  /** 涨跌幅 %。 */
+  pct: number | null
+  /** 流通市值（元）。 */
+  ltsz: number | null
+  /** 总市值（元）。 */
+  zsz: number | null
+  /** 流通股本（股）。 */
+  ltgb: number | null
   detail: string | null
 }
 
@@ -121,10 +137,17 @@ export interface ReviewHandlerDeps {
   resolveTradeDate: TradeDateResolver['resolve']
   getLimitReason: LimitDayFetcher
   getConcepts(input: { code: string; date?: string }): Promise<ReviewConceptView>
-  // ④ enrich 回溯与名称层②
+  // ④ enrich 回溯、行情四格与名称层②
   runBacktrack: typeof runLimitReasonBacktrack
-  /** T2/S8 名称反查（层②；未注入 → enrich 名称段显式不可得，不出网）。 */
-  lookupNameRemote?(code: string): Promise<string | null>
+  /** 行情快照（S9 realhead；行情四格 + 名称层②末级兜底共用同一次出站。未注入 → 行情段显式不可得、名称层②止于 T2/S8）。 */
+  lookupQuote?(code: string): Promise<{
+    name: string | null
+    price: number | null
+    pct: number | null
+    ltsz: number | null
+    zsz: number | null
+    ltgb: number | null
+  } | null>
   /** 本地段名称（层①/③；生产 = createNameResolver({dataRoot}) 不注入反查——本地段零网络）。 */
   resolveLocalName(code: string): Promise<ReviewLocalNameView>
   // ⑤ 资产（形态①：内联 lib——生产 readAsset 恒 null；白名单资产面经单测注入资产表核验）
@@ -498,27 +521,41 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         throw e
       }
     }
-    // 名称层②（T2/S8 反查，best-effort；未接线/失败/未命中 → 显式不可得，不冒充）。
-    let name: { available: boolean; name: string | null; nameSource: string | null; confidence: 'high' | 'low' | null; detail: string | null }
-    if (deps.lookupNameRemote === undefined) {
-      name = { available: false, name: null, nameSource: null, confidence: null, detail: 'T2/S8 名称反查出口未接线（层②跳过）' }
-    } else {
-      try {
-        const remote = await deps.lookupNameRemote(code)
-        name =
-          remote === null
-            ? { available: false, name: null, nameSource: null, confidence: null, detail: 'T2/S8 名称反查未命中' }
-            : { available: true, name: remote, nameSource: 'T2-S8', confidence: 'high', detail: null }
-      } catch (e) {
-        name = { available: false, name: null, nameSource: null, confidence: null, detail: describeCause(e) }
-      }
-    }
     // B1 标签（T2 概念；单项降级不影响其它段）。
     let concepts: ReviewConceptView
     try {
       concepts = await deps.getConcepts({ code, date })
     } catch (e) {
       concepts = { available: false, labels: [], name: null, detail: describeCause(e) }
+    }
+    // 行情四格 + 名称层②末级（S9 快照；单次 enrich 至多 1 次出站，名称复用同一份——quote-snapshot 能力）。
+    let quote: ReviewQuoteView
+    let quoteName: string | null = null
+    if (deps.lookupQuote === undefined) {
+      quote = { available: false, price: null, pct: null, ltsz: null, zsz: null, ltgb: null, detail: '行情快照出口未接线（S9 跳过）' }
+    } else {
+      try {
+        const snap = await deps.lookupQuote(code)
+        if (snap === null) {
+          quote = { available: false, price: null, pct: null, ltsz: null, zsz: null, ltgb: null, detail: '行情快照未取得（realhead 无数据/护栏受限）' }
+        } else {
+          quote = { available: true, price: snap.price, pct: snap.pct, ltsz: snap.ltsz, zsz: snap.zsz, ltgb: snap.ltgb, detail: null }
+          quoteName = snap.name
+        }
+      } catch (e) {
+        quote = { available: false, price: null, pct: null, ltsz: null, zsz: null, ltgb: null, detail: describeCause(e) }
+      }
+    }
+    // 名称层②：先 T2/S8 反查（concepts.name），未命中由行情快照 name 兜底（nameSource 反映实际来源）。
+    let name: { available: boolean; name: string | null; nameSource: string | null; confidence: 'high' | 'low' | null; detail: string | null }
+    if (concepts.available === true && concepts.name !== null && concepts.name !== '') {
+      name = { available: true, name: concepts.name, nameSource: 'T2-S8', confidence: 'high', detail: null }
+    } else if (quoteName !== null && quoteName !== '') {
+      name = { available: true, name: quoteName, nameSource: 'quote-ths', confidence: 'high', detail: null }
+    } else if (deps.lookupQuote === undefined) {
+      name = { available: false, name: null, nameSource: null, confidence: null, detail: '名称反查出口未接线（层②跳过）' }
+    } else {
+      name = { available: false, name: null, nameSource: null, confidence: null, detail: 'T2/S8 反查与行情快照均未取得名称' }
     }
     writeJson(res, 200, {
       code,
@@ -530,6 +567,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         marketSuffix: t0.marketSuffix,
       },
       name,
+      quote,
       concepts,
       limitReason,
     })
@@ -843,16 +881,13 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
                 : 'S8 未返回可用概念',
       })),
     runBacktrack: runLimitReasonBacktrack,
-    // 层②：T2/S8 名称反查（getConcepts.name）→ 未命中再行情名称源兜底
-    // （data.getQuoteName——change 2 新出口，owner 2026-10-05「名称必须显示」；
-    // S8 反查仅覆盖板块前 N 权重股，realhead 行情源兜底非权重股）。
-    lookupNameRemote: async (code) => {
-      try {
-        const r = await data.getConcepts({ code })
-        if (r.available === true && typeof r.name === 'string' && r.name !== '') return r.name
-      } catch { /* S8 失败 → 落行情源兜底 */ }
-      const q = await data.getQuoteName(code)
-      return q.available === true ? q.name : null
+    // 行情四格 + 名称层②末级：S9 行情快照（getQuoteSnapshot——change 2 出口；
+    // owner 2026-10-05「迁移四个基础数据」；S8 反查仅覆盖板块前 N 权重股，
+    // realhead 快照兜底非权重股名称并同源供四格行情——同一份出站，spec = quote-snapshot）。
+    lookupQuote: async (code) => {
+      const q = await data.getQuoteSnapshot(code)
+      if (q.available !== true) return null
+      return { name: q.name, price: q.price, pct: q.pct, ltsz: q.ltsz, zsz: q.zsz, ltgb: q.ltgb }
     },
     // 本地段名称（层①/③）：不注入反查——/api/local 的名称取值域零网络（§12.4）。
     resolveLocalName: (code) =>

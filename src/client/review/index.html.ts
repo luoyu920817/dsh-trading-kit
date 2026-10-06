@@ -15,7 +15,8 @@
  * routePath, injectedAt }`；`writable === false`（C 层签字只读分支）时 B3 降级为
  * 禁用态 + 提示 DSH 侧写卡（spike 决策第 3 条：A 层在 TDX 内未验证存活）。
  *
- * 四区块（spec「四区块布局」）：B1 标的头部（代码+名称分层+标签+涨停原因）、
+ * 四区块（spec「四区块布局」）：B1 标的头部（代码+名称分层+行情四格+标签+涨停原因——
+ * 四格 owner 2026-10-05 裁决自参考页迁移，数据 = S9 快照）、
  * B2 日期（自绘月历组件：预填最近期交易日，可改选/清除——owner 2026-10-05 裁决
  * 弃用原生 date 输入与「待确认」朗读文案）、B3 输入+保存+预留工具框（disabled +
  * tabindex="-1"）、B4 当日卡片（时间倒序+纯文本转义+复制 block 引用+warnings 展示）。
@@ -49,9 +50,25 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   #rv-code { font-size: 14px; font-weight: 600; color: #e6e6e6; background: #242424; border: 1px solid #3a3a3a; padding: 3px 9px; border-radius: 999px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; margin-right: 10px; }
   #rv-name { color: #ff4d4f; font-size: 20px; font-weight: 700; letter-spacing: 0.5px; margin-right: 10px; }
   .muted { color: #8a8a8a; font-size: 12px; }
+  #rv-concepts { margin-top: 8px; }
+  #rv-limit { margin-top: 6px; }
   .warnbox { background: #2a2410; border: 1px solid #7a6520; color: #e8d48a; padding: 5px 8px; margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; border-radius: 4px; }
   .tagline { margin-top: 8px; }
   .tag { display: inline-block; background: #333333; color: #ffa500; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin: 0 6px 4px 0; }
+  /* 行情四格（owner 2026-10-05 裁决：自参考页 同花顺涨跌停原因.html 迁移——现价着色/
+     流通市值/总市值/流通股本；grid 四列、窄面板折 2×2；数据 = S9 行情快照。） */
+  .quote-grid { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 10px; row-gap: 10px; }
+  .quote-cell { min-width: 0; padding-left: 12px; border-left: 1px solid #262626; }
+  .quote-cell:first-child { padding-left: 0; border-left: none; }
+  .quote-label { color: #666666; font-size: 11px; text-align: left; padding-bottom: 4px; border-bottom: 1px solid #2a2a2a; white-space: nowrap; }
+  .quote-value { padding-top: 5px; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qp-value { color: #e6e6e6; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .qp-value.up { color: #ff4d4f; }
+  .qp-value.down { color: #4dabf7; }
+  @media (max-width: 500px) {
+    .quote-grid { grid-template-columns: repeat(2, 1fr); }
+    .quote-cell:nth-child(odd) { padding-left: 0; border-left: none; }
+  }
   /* 自绘月历（owner 2026-10-05 裁决：弃用原生 date 输入——其上下微调控件不可用
      且观感不符；月面板 = 选择器，不打标有卡日期。flex/grid 在 Chromium 81 可用，
      仅 gap（84+）禁用，以 margin 间隔。） */
@@ -94,6 +111,12 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   <div id="rv-code-line">
     <span id="rv-code">—</span>
     <span id="rv-name" class="muted"></span>
+  </div>
+  <div id="rv-quote" class="quote-grid">
+    <div class="quote-cell"><div class="quote-label">现价</div><div class="quote-value"><span id="rv-qp-price" class="qp-value">--</span></div></div>
+    <div class="quote-cell"><div class="quote-label">流通市值</div><div class="quote-value"><span id="rv-qp-ltsz" class="qp-value">--</span></div></div>
+    <div class="quote-cell"><div class="quote-label">总市值</div><div class="quote-value"><span id="rv-qp-zsz" class="qp-value">--</span></div></div>
+    <div class="quote-cell"><div class="quote-label">流通股本</div><div class="quote-value"><span id="rv-qp-ltgb" class="qp-value">--</span></div></div>
   </div>
   <div id="rv-concepts" class="muted"></div>
   <div id="rv-limit" class="muted"></div>
@@ -229,6 +252,41 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     byId('rv-concepts').textContent = '';
     byId('rv-limit').textContent = '';
     updateNameLine();
+  }
+
+  // ── 行情四格（owner 2026-10-05 裁决：自参考页迁移；数据 = /api/enrich 的 quote 段。
+  // 换算口径：≥1 亿 → 亿（两位小数），<1 亿 → 万；股本带「股」。占位 -- 不冒充数值。）──
+  function fmtMoney(v) {
+    if (v === null || v === undefined || !isFinite(v)) return '--';
+    var yi = v / 1e8;
+    if (Math.abs(yi) >= 1) return yi.toFixed(2) + '亿';
+    return (v / 1e4).toFixed(0) + '万';
+  }
+
+  function fmtShares(v) {
+    if (v === null || v === undefined || !isFinite(v)) return '--';
+    var yi = v / 1e8;
+    if (Math.abs(yi) >= 1) return yi.toFixed(2) + '亿股';
+    return (v / 1e4).toFixed(0) + '万股';
+  }
+
+  function renderQuote(q) {
+    var priceEl = byId('rv-qp-price');
+    if (q === null || q === undefined || q.available !== true) {
+      priceEl.className = 'qp-value';
+      priceEl.textContent = '--';
+      byId('rv-qp-ltsz').textContent = '--';
+      byId('rv-qp-zsz').textContent = '--';
+      byId('rv-qp-ltgb').textContent = '--';
+      return;
+    }
+    var pct = q.pct;
+    priceEl.className = 'qp-value ' + (pct !== null && pct > 0 ? 'up' : (pct !== null && pct < 0 ? 'down' : ''));
+    priceEl.textContent = (q.price !== null && q.price !== undefined ? q.price.toFixed(2) : '--')
+      + (pct !== null && pct !== undefined ? '  ' + (pct > 0 ? '+' : '') + pct.toFixed(2) + '%' : '');
+    byId('rv-qp-ltsz').textContent = fmtMoney(q.ltsz);
+    byId('rv-qp-zsz').textContent = fmtMoney(q.zsz);
+    byId('rv-qp-ltgb').textContent = fmtShares(q.ltgb);
   }
 
   function showOwnerConfirm() {
@@ -490,6 +548,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   function setEnrichPending() {
     byId('rv-limit').textContent = '涨停原因：加载中…';
     byId('rv-concepts').textContent = '标签：加载中…';
+    renderQuote(null); // 行情四格复位占位——新快照到达前 MUST NOT 残留旧标的数值
   }
 
   function renderEnrichUnavailable(msg) {
@@ -549,6 +608,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       }
     }
     updateNameLine();
+    renderQuote(data.quote); // 行情四格（S9 快照；不可得 → 逐格 '--' 占位）
     var c = data.concepts;
     var conceptsEl = byId('rv-concepts');
     conceptsEl.textContent = '';

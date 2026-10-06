@@ -228,21 +228,67 @@ describe('GET /review/api/local：纯本地段（tasks 2.1/2.3/2.6）', () => {
 })
 
 describe('GET /review/api/enrich：网络段（tasks 2.1；名称层②/标签/回溯）', () => {
-  it('合法代码 → 200：T1 命中文案（按源业务日）+ 层②名称 T2-S8 + 标签', async () => {
+  it('合法代码 → 200：T1 命中文案（按源业务日）+ 层②名称 T2-S8 + 标签 + 行情四格', async () => {
     const { deps, records } = makeDeps()
     const rec = await drive(createReviewHandler(deps), authedReq({ url: API_ENRICH + '?code=600000&date=2026-09-24' }))
     expect(rec.status).toBe(200)
-    const body = jsonBody<{ code: string; name: { available: boolean; name: string | null; nameSource: string | null }; concepts: { available: boolean; labels: string[] }; limitReason: { availability: { available: boolean }; businessDate?: string; text: string; requestedDates: string[] } }>(rec)
+    const body = jsonBody<{ code: string; name: { available: boolean; name: string | null; nameSource: string | null }; quote: { available: boolean; price: number | null; pct: number | null; ltsz: number | null; zsz: number | null; ltgb: number | null; detail: string | null }; concepts: { available: boolean; labels: string[] }; limitReason: { availability: { available: boolean }; businessDate?: string; text: string; requestedDates: string[] } }>(rec)
     expect(body.code).toBe('600000')
     expect(body.name.available).toBe(true)
     expect(body.name.nameSource).toBe('T2-S8')
     expect(body.concepts.available).toBe(true)
     expect(body.concepts.labels).toContain('银行')
+    // 行情四格（S9 快照；concepts.name 命中时名称走 T2-S8，四格仍出快照——同一次出站）。
+    expect(body.quote.available).toBe(true)
+    expect(body.quote.price).toBe(13.25)
+    expect(body.quote.pct).toBe(2.34)
+    expect(body.quote.ltsz).toBe(3.86e11)
+    expect(body.quote.zsz).toBe(3.9e11)
+    expect(body.quote.ltgb).toBe(2.92e10)
+    expect(body.quote.detail).toBeNull()
     expect(body.limitReason.availability.available).toBe(true)
     expect(body.limitReason.businessDate).toBe('2026-09-24')
     expect(body.limitReason.text).toContain('按源业务日 2026-09-24')
     expect(body.limitReason.requestedDates).toEqual(['2026-09-24'])
     expect(records.limitCalls).toHaveLength(1)
+    expect(records.quoteCalls).toEqual(['600000'])
+  })
+
+  it('T2/S8 名称未命中 → 层②止于行情快照 name（nameSource=quote-ths，同一次出站）', async () => {
+    const { deps, records } = makeDeps({
+      overrides: {
+        getConcepts: async () => ({ available: true, labels: ['银行'], name: null, detail: null }),
+      },
+    })
+    const rec = await drive(createReviewHandler(deps), authedReq({ url: API_ENRICH + '?code=600000' }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ name: { available: boolean; name: string | null; nameSource: string | null }; quote: { available: boolean } }>(rec)
+    expect(body.name.available).toBe(true)
+    expect(body.name.nameSource).toBe('quote-ths')
+    expect(body.name.name).toBe('浦发银行')
+    expect(body.quote.available).toBe(true)
+    expect(records.quoteCalls).toHaveLength(1) // 单次 enrich 至多 1 次 S9 出站
+  })
+
+  it('行情快照不可得 → quote 段 available=false 全 null + detail（不冒充 0），名称随层②显式未命中', async () => {
+    const { deps } = makeDeps({
+      overrides: {
+        getConcepts: async () => ({ available: true, labels: ['银行'], name: null, detail: null }),
+        lookupQuote: async () => null,
+      },
+    })
+    const rec = await drive(createReviewHandler(deps), authedReq({ url: API_ENRICH + '?code=600000' }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ name: { available: boolean; nameSource: string | null }; quote: { available: boolean; price: number | null; pct: number | null; ltsz: number | null; zsz: number | null; ltgb: number | null; detail: string | null } }>(rec)
+    expect(body.quote.available).toBe(false)
+    expect(body.quote.price).toBeNull()
+    expect(body.quote.pct).toBeNull()
+    expect(body.quote.ltsz).toBeNull()
+    expect(body.quote.zsz).toBeNull()
+    expect(body.quote.ltgb).toBeNull()
+    expect(body.quote.detail).toContain('行情快照未取得')
+    expect(body.name.available).toBe(false)
+    expect(body.name.nameSource).toBeNull()
   })
 
   it('非法代码 → 400 且零网络（T1/T2 均未被调用）', async () => {
@@ -251,16 +297,20 @@ describe('GET /review/api/enrich：网络段（tasks 2.1；名称层②/标签/�
     expect(rec.status).toBe(400)
     expect(records.limitCalls).toHaveLength(0)
     expect(records.conceptCalls).toHaveLength(0)
-    expect(records.remoteNameCalls).toHaveLength(0)
+    expect(records.quoteCalls).toHaveLength(0)
   })
 
-  it('层②未接线 → 名称段显式不可得（不冒充）；T2 抛错 → 标签单项降级', async () => {
-    const { deps } = makeDeps({ overrides: { lookupNameRemote: undefined } })
+  it('行情快照未接线 → quote 段显式不可得（不冒充），名称层②止于 T2/S8 仍可得；T2 抛错 → 标签单项降级', async () => {
+    const { deps } = makeDeps({ overrides: { lookupQuote: undefined } })
     const handler = createReviewHandler(deps)
     const rec = await drive(handler, authedReq({ url: API_ENRICH + '?code=600000' }))
-    const body = jsonBody<{ name: { available: boolean; detail: string | null }; concepts: { available: boolean } }>(rec)
-    expect(body.name.available).toBe(false)
-    expect(body.name.detail).toContain('未接线')
+    const body = jsonBody<{ name: { available: boolean; nameSource: string | null }; quote: { available: boolean; price: number | null; detail: string | null }; concepts: { available: boolean } }>(rec)
+    expect(body.quote.available).toBe(false)
+    expect(body.quote.price).toBeNull()
+    expect(body.quote.detail).toContain('未接线')
+    expect(body.name.available).toBe(true) // 层②第一级（T2/S8 反查）随 getConcepts 仍接线
+    expect(body.name.nameSource).toBe('T2-S8')
+    expect(body.concepts.available).toBe(true)
     const throwing = makeDeps({
       overrides: {
         getConcepts: async () => {
@@ -269,9 +319,11 @@ describe('GET /review/api/enrich：网络段（tasks 2.1；名称层②/标签/�
       },
     })
     const rec2 = await drive(createReviewHandler(throwing.deps), authedReq({ url: API_ENRICH + '?code=600000' }))
-    const body2 = jsonBody<{ concepts: { available: boolean; detail: string | null }; limitReason: { availability: { available: boolean } } }>(rec2)
+    const body2 = jsonBody<{ name: { available: boolean; nameSource: string | null }; concepts: { available: boolean; detail: string | null }; limitReason: { availability: { available: boolean } } }>(rec2)
     expect(body2.concepts.available).toBe(false)
     expect(body2.concepts.detail).toContain('S8 不可达')
+    expect(body2.name.available).toBe(true) // S8 失败 → 名称层②落快照兜底
+    expect(body2.name.nameSource).toBe('quote-ths')
     expect(body2.limitReason.availability.available).toBe(true) // 单项降级不回传 B1 其它段
   })
 

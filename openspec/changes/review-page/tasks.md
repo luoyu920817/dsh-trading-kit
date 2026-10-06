@@ -175,6 +175,7 @@
   - 验收：`/api/enrich` 挂起/失败时 B1 仍显示本地层名称或代码 + 「名称未获取」；层①命中时网络层 MUST NOT 覆盖；不阻塞输入
   - 依赖：2.1、5.2、`§12.4`
   - 登记（2026-09-27，路由/前端线）：B1 名称分层：层①/③ 来自 /api/local（nameSource: frontmatter-history|code-only）；层② 补位仅当 code-only、层① 命中不覆盖；「名称未获取」显式态；标签/涨停原因异步补位、单项降级显示原因（分档文案由服务端 availability 驱动，含「按源业务日 <日期>」标注）。布点断言 review-page.test.ts。
+  - 修订登记（2026-10-05，owner 裁决「迁移四个基础数据」）：B1 增**行情四格**（自参考页 `同花顺涨跌停原因.html` 迁移：现价含涨跌幅着色涨红跌蓝、流通市值、总市值、流通股本；grid 四列窄面板折 2×2；换算 ≥1 亿 → 亿、<1 亿 → 万、股本带「股」；不可得逐格 `--` 占位）。数据 = `/api/enrich` 新增 `quote` 段（S9 快照，spec 见 quote-snapshot 能力）；名称层②改链：concepts.name（T2-S8）→ 快照 name（`quote-ths`，修正原实现的 nameSource 误标——原 lookupNameRemote 兜底名被统一标成 T2-S8）；`enrich` 单次至多 1 次 S9 出站。handler 测试注入 lookupNameRemote → lookupQuote，新增 quote-ths 兜底与快照不可得两用例。
 - [x] 4.3 B2：日期切换（默认归属交易日；待确认态可见），切换不重载页面；无该日文档显示空态
   - 产物：B2 组件逻辑
   - 验收：spec「B2 日期组件与历史读回」全部场景

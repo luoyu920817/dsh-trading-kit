@@ -119,7 +119,7 @@
 B1 SHALL 显示标的代码与名称（三层兜底）；**页面不设「复盘卡片」一级标题与「标签」前缀文案**（owner 2026-10-05 指示移除——chips 直接排列）；**页面不展示名称来源标注**（来源保留在 API 响应 `nameSource`；owner 2026-10-05 指示简化显示）；**页面内不提供「在 TDX 中打开标的」跳转链接**（页面本身运行于 TDX 内——owner 2026-10-05 指示移除；spike 决策①的 treeid 通道保留备用），且**层号 = 兜底优先级、每层接口归属唯一**（`iteration-1-contracts §12.4`）：① 该标的历史卡片文档 frontmatter 的 `name`（零网络，归 `/api/local`）；② 数据工具名称反查（best-effort，归 `/api/enrich`，入参含 `code`）：**先 T2/S8 反查（`nameSource: 'T2-S8'`），未命中再行情名称源探针（同花顺 realhead，`nameSource: 'quote-ths'`；owner 指示 2026-10-05「名称必须显示」——S8 反查仅覆盖板块前 N 权重股，非权重股需行情源兜底）**；③ 仅显示代码（归 `/api/local`）。
 
 - `/api/local` MUST NOT 执行网络反查，其名称取值域只有 ① 与 ③，并 SHALL 返回 `nameSource: 'frontmatter-history' | 'code-only'`。
-- `/api/enrich` SHALL 返回层②的 `name` 与 `nameSource: 'T2-S8'`；页面在本地段为 `code-only` 时用层②**补位替换**并更新来源标注；本地段已命中层①时 MUST NOT 被网络段覆盖。
+- `/api/enrich` SHALL 返回层②的 `name` 与实际来源 `nameSource: 'T2-S8' | 'quote-ths'`（层②内部两级：T2/S8 反查命中 → `T2-S8`；未命中由行情快照的 `name` 兜底 → `quote-ths`，复用同一次 S9 出站——见 quote-snapshot 能力）；页面在本地段为 `code-only` 时用层②**补位替换**并更新来源标注；本地段已命中层①时 MUST NOT 被网络段覆盖。
 - 全部未命中 SHALL 显示代码并明示「名称未获取」，MUST NOT 显示空白或猜测名称。名称结果 SHALL 带来源（`source`）与 `confidence`，以便 D-TQ 裁决为选项 B 时替换 seam 实现而不改调用方。
 
 #### Scenario: 层①命中（本地历史 frontmatter）
@@ -182,12 +182,22 @@ B1 SHALL 显示标的代码与名称（三层兜底）；**页面不设「复盘
 
 ### Requirement: B1 头部数据与独立降级
 
-B1 SHALL 显示该标的的概念标签（T2）与最近一个有涨停记录交易日的原因（T1），两项数据 SHALL 经插件 service 出口获取（与 agent 工具同一实现）。任一项不可用 SHALL 独立显示「数据源不可用 + 原因」，MUST NOT 影响其它区块渲染（不整体白屏），MUST NOT 以 `0` 或空值冒充。
+B1 SHALL 显示该标的的概念标签（T2）、最近一个有涨停记录交易日的原因（T1），以及**行情四格**（owner 2026-10-05 指示自参考页 `同花顺涨跌停原因.html` 迁移：现价（含涨跌幅着色——涨红 `up`、跌蓝 `down`）、流通市值、总市值、流通股本；数据 = S9 行情快照，单位换算「≥1 亿 → 亿、<1 亿 → 万」，股本带「股」）。两项数据 SHALL 经插件 service 出口获取（与 agent 工具同一实现）。任一项不可用 SHALL 独立显示「数据源不可用 + 原因」，MUST NOT 影响其它区块渲染（不整体白屏），MUST NOT 以 `0` 或空值冒充；行情四格不可用时逐格显示占位 `--`（与参考页一致，占位不是冒充——不携带任何数值语义）。
 
 #### Scenario: 数据可用
 
 - **WHEN** T2 与 T1 均返回数据
 - **THEN** B1 显示标签与涨停原因，并可分辨各字段来源
+
+#### Scenario: 行情四格渲染
+
+- **WHEN** `/api/enrich` 返回 `quote.available=true`（S9 快照命中）
+- **THEN** B1 在代码/名称行下方按参考页样式渲染四格：现价格值着色（涨跌幅 > 0 红、< 0 蓝、无涨跌幅不着色）、流通市值/总市值按「亿/万」换算、流通股本按「亿股/万股」换算；字段缺失的格子显示 `--`
+
+#### Scenario: 行情四格不可用
+
+- **WHEN** S9 快照不可得（护栏受限/源失败/北交所未覆盖）
+- **THEN** 四格显示占位 `--`（不显示 0 或空串冒充），标签与涨停原因、输入与 B4 卡片区不受影响
 
 #### Scenario: 单项不可用
 

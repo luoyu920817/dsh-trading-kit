@@ -75,7 +75,7 @@ export function makeRes(): { res: TraderKitHttpResponse; rec: RecordedResponse }
 export interface SeamRecords {
   limitCalls: Array<{ code: string; date: string }>
   conceptCalls: Array<{ code: string; date?: string }>
-  remoteNameCalls: string[]
+  quoteCalls: string[]
   locateCalls: number
 }
 
@@ -95,19 +95,29 @@ export function makeTempRoot(prefix = 'dtk-review-routes-'): string {
   return mkdtempSync(join(tmpdir(), prefix))
 }
 
+/** 层②行情快照桩形状（S9 realhead 的解析面）。 */
+export interface QuoteStub {
+  name: string | null
+  price: number | null
+  pct: number | null
+  ltsz: number | null
+  zsz: number | null
+  ltgb: number | null
+}
+
 export interface MakeDepsOptions {
   dataRoot?: string
   /** 逐日 T1 桩（缺省 = 当日命中）；函数形态可按请求日给出响应序列。 */
   limitResponse?: LimitDayResponse | ((input: { code: string; date: string }) => Promise<LimitDayResponse>)
-  /** 层②名称反查桩（缺省 = 命中「浦发银行」）。 */
-  remoteName?: string | null | ((code: string) => Promise<string | null>)
+  /** 行情快照桩（缺省 = 命中「浦发银行」+ 样例四格数值；null = 快照不可得）。 */
+  remoteQuote?: QuoteStub | null | ((code: string) => Promise<QuoteStub | null>)
   overrides?: Partial<ReviewHandlerDeps>
 }
 
 /** handler 依赖工厂：真实 store + 真实临时目录 + 函数注入的取数 seam（带调用记录）。 */
 export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDeps; records: SeamRecords } {
   const dataRoot = options.dataRoot ?? makeTempRoot()
-  const records: SeamRecords = { limitCalls: [], conceptCalls: [], remoteNameCalls: [], locateCalls: 0 }
+  const records: SeamRecords = { limitCalls: [], conceptCalls: [], quoteCalls: [], locateCalls: 0 }
   const limitFn: (input: { code: string; date: string }) => Promise<LimitDayResponse> = (input) => {
     records.limitCalls.push(input)
     const given = options.limitResponse
@@ -115,10 +125,14 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
     if (typeof given === 'function') return given(input)
     return Promise.resolve(given)
   }
-  const remoteFn = (code: string): Promise<string | null> => {
-    records.remoteNameCalls.push(code)
-    if (typeof options.remoteName === 'function') return options.remoteName(code)
-    return Promise.resolve(options.remoteName === undefined ? '浦发银行' : options.remoteName)
+  const quoteFn = (code: string): Promise<QuoteStub | null> => {
+    records.quoteCalls.push(code)
+    const given = options.remoteQuote
+    if (typeof given === 'function') return given(code)
+    const stub: QuoteStub = given === undefined || given === null
+      ? { name: '浦发银行', price: 13.25, pct: 2.34, ltsz: 3.86e11, zsz: 3.9e11, ltgb: 2.92e10 }
+      : given
+    return Promise.resolve(given === null ? null : stub)
   }
   const locateDocCounted: ReviewHandlerDeps['locateDoc'] = async (loc) => {
     records.locateCalls += 1
@@ -145,7 +159,7 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
       return { available: true, labels: ['银行', '长三角'], name: '浦发银行', detail: null }
     },
     runBacktrack: runLimitReasonBacktrack,
-    lookupNameRemote: remoteFn,
+    lookupQuote: quoteFn,
     resolveLocalName: async (code) => {
       const r = await localNameResolver.resolve(code)
       return {

@@ -251,3 +251,4 @@
   - 产物：`design.md` 的跨 change 回写清单（登记文本）
   - 验收：清单四条各含目标 change、目标符号（`guardStatus` / `errors` 枚举 / `src/skill/download.ts` / `sessionRejected`·`budgetExhausted`）与落地 owner；本 change 内所有引用 `guardStatus` 的表述均指向 `data-tool-contract` 的具名 Requirement（`grep -rn "guardStatus" openspec/changes/data-foundation/` 无悬空引用）
   - 依赖：3.8、5.6、7.5
+- [x] 8.10 增补（owner 指示 2026-10-05「迁移四个基础数据」）：行情快照源 S9（同花顺 realhead）——`src/data/quote-name.ts` 增 `fetchQuoteSnapshot`（现价 `10`/涨跌幅 `199112`/流通市值 `3475914`/总市值 `3541450`/流通股本 `407` + name，一次出站；实时语义不进日级缓存；沪深覆盖、北交所显式不可得）；service 出口 `traderKit.data.getQuoteSnapshot`（src/service/index.ts）；`fetchQuoteName` 收敛为快照的名称投影（available 专指名称、不可得必带原因）。spec 新增 `specs/quote-snapshot/spec.md`（ADDED；四项字段解析/护栏与传输分档/名称层②复用同一次出站 三场景）。测试 `test/quote-snapshot.test.ts`（真实本地桩 + 重定向传输，`OFFICIAL_BASES` 增 `d.10jqka.com.cn`）——同时补上此前缺失的 S9 测试面（5 用例）。

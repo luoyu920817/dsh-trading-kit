@@ -84,6 +84,7 @@ export const OFFICIAL_BASES: readonly string[] = [
   'https://flow.10jqka.com.cn', // S5 异动历史
   'https://vis.10jqka.com.cn', // S5 涨停明细
   'https://flash-api.xuangubao.com.cn', // S8 概念
+  'https://d.10jqka.com.cn', // S9 行情快照（realhead JSONP）
 ]
 
 /** 重定向传输：官方 URL → 本地桩（真实 fetch 出站到真实本地 http 服务，零 mock）。 */
