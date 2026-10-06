@@ -18,8 +18,9 @@
  * 四区块（spec「四区块布局」）：B1 标的头部（代码+名称分层+行情四格+标签+涨停原因——
  * 四格 owner 2026-10-05 裁决自参考页迁移，数据 = S9 快照）、
  * B2 日期（自绘月历组件：预填最近期交易日，可改选/清除——owner 2026-10-05 裁决
- * 弃用原生 date 输入与「待确认」朗读文案）、B3 输入+保存+预留工具框（disabled +
- * tabindex="-1"）、B4 当日卡片（时间倒序+纯文本转义+复制 block 引用+warnings 展示）。
+ * 弃用原生 date 输入与「待确认」朗读文案）、B3 输入+保存+工具框「整理」按钮
+ * （owner 2026-10-06 追授：登记当前标的整理意图并复制固定指令——agent 由 DSH
+ * 会话发送触发，页面不直接点火）、B4 当日卡片（时间倒序+纯文本转义+复制 block 引用+warnings 展示）。
  */
 import { parseReviewParams } from './params.ts'
 
@@ -154,7 +155,7 @@ export const REVIEW_HTML = `<!DOCTYPE html>
     <button type="button" id="rv-save">保存</button>
     <span id="rv-status" class="muted"></span>
   </div>
-  <div class="muted">工具框（预留，v1 无业务按钮）：<button type="button" id="rv-reserve" disabled tabindex="-1">预留按钮</button></div>
+  <div class="muted">工具框：<button type="button" id="rv-organize" disabled title="登记当前标的的整理意图并复制指令——到 DSH 会话粘贴发送">整理</button><span id="rv-organize-state" class="muted"></span></div>
   <div id="rv-readonly-hint" class="warnbox" style="display:none">写卡不可用：A 层认证未生效——请在 DSH 会话侧写卡，或先经登录 URL 完成两步登录。</div>
 </section>
 
@@ -259,6 +260,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       byId('rv-concepts').textContent = '';
       byId('rv-limit').textContent = '';
     }
+    byId('rv-organize').disabled = !writable || currentCode === null; // 整理按钮随标的/写通道联动
     updateNameLine();
   }
 
@@ -899,6 +901,33 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   byId('rv-save').addEventListener('click', submit);
   byId('rv-date').addEventListener('change', applyDateChange);
   wireCalendar();
+  // ── B3 整理按钮（owner 2026-10-06 追授）：登记意图 + 复制固定指令——agent 由
+  // DSH 会话发送触发（页面与 agent 无通道是既定边界；指令模板在服务端）。──────
+  byId('rv-organize').addEventListener('click', function () {
+    if (!writable || currentCode === null) return;
+    var btn = byId('rv-organize');
+    btn.disabled = true;
+    fetch(basePath + '/review/api/organize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-write-key': (window.__REVIEW__ && window.__REVIEW__.writeKey) || '' },
+      body: JSON.stringify({ code: currentCode, date: currentDate }),
+    }).then(function (resp) {
+      return resp.json().then(function (b) { return { status: resp.status, body: b }; });
+    }).then(function (r) {
+      if (r.status === 200 && r.body && r.body.status === 'registered') {
+        copyText(r.body.prompt, function (ok) {
+          setStatus(ok ? '整理指令已复制——请到 DSH 会话粘贴发送'
+            : '复制失败——请在 DSH 会话手动发送「整理 ' + currentCode + '」');
+        });
+      } else {
+        setStatus('整理登记失败：' + describeError(r.body));
+      }
+      btn.disabled = !writable || currentCode === null;
+    }, function (e) {
+      setStatus('整理登记失败：' + String(e));
+      btn.disabled = !writable || currentCode === null;
+    });
+  });
   byId('rv-confirm-owner').addEventListener('click', function () {
     // 一次显式确认：归属切到新标的；确认后保存即可提交（服务端仍按 clientRequestId 幂等）。
     pendingOwner = null;

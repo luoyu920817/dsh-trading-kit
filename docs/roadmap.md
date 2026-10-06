@@ -88,6 +88,10 @@
   密钥 = `config.review.writeKey`，缺省进程随机生成并经页面注入自动携带，页面读者
   与密钥持有者同为回环访问者）。落地 = routes writeCredentialValid + 页面 x-write-key
   自动携带；安全边界：**写接口仍有两道检查（来源 + 密钥），仅绑定形态放宽**。
+- **2026-10-06：owner 追授「整理」按钮（复盘页 B3 工具框）**——预留占位替换为整理动作：点击经
+  `POST /review/api/organize`（写凭据同写卡）登记当前标的/日期意图并复制服务端固定指令
+  （`buildOrganizePrompt` 单一事实源），用户到 DSH 会话粘贴发送触发 agent；**插件不自建 agent 运行**
+  （页面与 agent 会话间无推送通道为既定边界，沿 review-loop 草案纪律）。
 
 ## 5. 迭代一重排（2026-09-27）
 

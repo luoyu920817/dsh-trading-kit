@@ -775,3 +775,55 @@ describe('POST /review/api/card/update + /delete（owner 2026-10-05 追授：修
     expect(r2.status).toBe(501)
   })
 })
+
+describe('POST /review/api/organize（owner 2026-10-06 追授：整理意图登记）', () => {
+  const API_ORGANIZE = REVIEW_PAGE_PATH + '/api/organize'
+
+  it('写凭据门控：无凭据 → 401', async () => {
+    const { deps } = makeDeps()
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_ORGANIZE, method: 'POST', body: JSON.stringify({ code: '000002', date: '2026-09-30' }),
+    }))
+    expect(rec.status).toBe(401)
+  })
+
+  it('登记成功 → 200 registered + 固定指令（含标的/日期/合规定位，服务端单一事实源）', async () => {
+    const { deps } = makeDeps()
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_ORGANIZE, method: 'POST',
+      body: JSON.stringify({ code: '000002', date: '2026-09-30' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ status: string; code: string; date: string | null; prompt: string }>(rec)
+    expect(body.status).toBe('registered')
+    expect(body.code).toBe('000002')
+    expect(body.date).toBe('2026-09-30')
+    expect(body.prompt).toContain('000002')
+    expect(body.prompt).toContain('2026-09-30')
+    expect(body.prompt).toContain('review_read_daily')
+    expect(body.prompt).toContain('review_append_ainote')
+    expect(body.prompt).toContain('研究辅助')
+  })
+
+  it('缺省日期 → prompt 以「最近交易日」占位；非法代码/非法日期 → 400', async () => {
+    const { deps } = makeDeps()
+    const handler = createReviewHandler(deps)
+    const nodate = await drive(handler, makeReq({
+      url: API_ORGANIZE, method: 'POST', body: JSON.stringify({ code: '000002' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(jsonBody<{ date: string | null; prompt: string }>(nodate).date).toBeNull()
+    expect(jsonBody<{ prompt: string }>(nodate).prompt).toContain('最近交易日')
+    const badCode = await drive(handler, makeReq({
+      url: API_ORGANIZE, method: 'POST', body: JSON.stringify({ code: 'abc' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(badCode.status).toBe(400)
+    const badDate = await drive(handler, makeReq({
+      url: API_ORGANIZE, method: 'POST', body: JSON.stringify({ code: '000002', date: '2026-9-30' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(badDate.status).toBe(400)
+  })
+})

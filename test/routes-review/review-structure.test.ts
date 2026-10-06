@@ -98,10 +98,14 @@ describe('6.3③④⑤ 页面层零第三方 URL / 零交易接口 / 17709 零 H
     expect(offenders.map(rel)).toEqual([])
   })
 
-  it('全 src 无 HTTP URL 指向 17709（仅 net.connect 探测；数据线辖区复核）', () => {
+  it('全 src 无 HTTP URL 指向 17709——唯一例外 = 出站闸文件（review-loop 白名单端点常量）', () => {
     const files = listTsFiles(SRC)
     expect(files.length).toBeGreaterThan(0)
-    const offenders = files.filter((f) => /https?:\/\/[^'"]*17709/.test(readFileSync(f, 'utf8')))
+    const offenders = files.filter((f) => {
+      const norm = rel(f)
+      if (norm === 'src/data/http.ts') return false // 白名单端点常量唯一定义点（闸内复核 method/字段/body）
+      return /https?:\/\/[^'"]*17709/.test(readFileSync(f, 'utf8'))
+    })
     expect(offenders.map(rel)).toEqual([])
   })
 })

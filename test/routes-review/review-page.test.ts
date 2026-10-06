@@ -110,9 +110,11 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain("'compositionstart'")
     expect(REVIEW_HTML).toContain("'compositionend'")
     expect(REVIEW_HTML).toContain('保存中')
-    expect(REVIEW_HTML).toContain('id="rv-reserve"')
-    expect(REVIEW_HTML).toMatch(/id="rv-reserve"[^>]*disabled/)
-    expect(REVIEW_HTML).toMatch(/id="rv-reserve"[^>]*tabindex="-1"/)
+    expect(REVIEW_HTML).toContain('id="rv-organize"') // 整理按钮（owner 2026-10-06 追授：预留占位替换）
+    expect(REVIEW_HTML).toContain("byId('rv-organize').disabled = !writable || currentCode === null") // 无标的/只读禁用布点
+    expect(REVIEW_HTML).toContain("'/review/api/organize'") // 登记接口（写凭据同写卡）
+    expect(REVIEW_HTML).toContain('整理指令已复制') // 成功提示引导到 DSH 会话
+    expect(REVIEW_HTML).not.toContain('id="rv-reserve"')
   })
 
   it('B4：时间倒序渲染 + 纯文本转义（textContent）+ 复制 block 引用 + warnings 显式展示', () => {

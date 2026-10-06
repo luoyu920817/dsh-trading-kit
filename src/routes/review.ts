@@ -11,6 +11,7 @@
  * | POST | …/review/api/card             | exact     | 写卡（**只认 A 层**；clientRequestId 幂等） |
  * | POST | …/review/api/card/update     | exact     | 卡片修订（owner 2026-10-05 追授；凭据同写卡；锚点不变仅改正文） |
  * | POST | …/review/api/card/delete     | exact     | 卡片删除（owner 2026-10-05 追授；凭据同写卡；整节移除） |
+ * | POST | …/review/api/organize        | exact     | 整理意图登记（owner 2026-10-06 追授；凭据同写卡；返回固定指令供会话发送——MUST NOT 由插件自建 agent 运行） |
  * | GET  | …/review/api/dates            | exact     | 该标的有卡日期（月桶扫描，B2 提示用） |
  * | GET  | …/review（prefix）            | prefix    | 直链 /review/<code> + /review/assets/<name> 的兜底匹配 |
  * MUST NOT 注册 GET /review/api/context（已废止——本地段与网络段 MUST 为独立请求）。
@@ -56,12 +57,28 @@ import {
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { formatZonedIso } from '../review/format.ts'
 import { appendCard, ConcurrentWriteError, deleteCard, DocMismatchError, locateDoc, parseDoc, AnchorNotFoundError, updateCard, type Card, type Loc } from '../review/store.ts'
+import { createStockProfileIfMissing, type EnsureProfileResult } from '../review/profile-create.ts'
+import { readBriefMeta, type BriefMeta } from '../summary/brief.ts'
+import { readRunReport, runReportPath, type RunReport } from '../summary/run-report.ts'
 import { resolveArea } from '../paths/resolve.ts'
 
 /** basePath（沿探针先例内联单一事实源；Config 接管归 change 2）。 */
 export const REVIEW_BASE_PATH = '/dsh-trader-kit'
 /** 复盘页路由路径（exact 注册；同串兼作 prefix 直链路由基路径，分属宿主两张路由表）。 */
 export const REVIEW_PAGE_PATH = REVIEW_BASE_PATH + '/review'
+
+/**
+ * 整理指令固定模板（owner 2026-10-06 追授「整理」按钮；服务端单一事实源，页面零拼接——
+ * spec「B3 工具框整理动作」）。agent 的实际执行由用户在 DSH 会话发送该指令触发；
+ * 插件不自建 agent 运行路径（review-loop 草案纪律）。
+ */
+export function buildOrganizePrompt(code: string, date: string): string {
+  return '整理 ' + code + (date !== '' ? '（' + date + '）' : '（最近交易日）') + ' 的复盘日志：'
+    + '请按 review-daily-summary 的单标的口径执行——用 review_read_daily 读取该标的当日与历史卡片，'
+    + '结合 get_limit_reason / get_concepts 的行情事实给出结构化预分析（事实面 + 待跟踪项），'
+    + '并用 review_append_ainote 写入该标的当日文档的 AI 附注（幂等，已有附注则跳过）。'
+    + '研究辅助，不构成投资建议；MUST NOT 改写用户卡片正文，MUST NOT 输出交易指令。'
+}
 
 /**
  * C 层未认证只读开关（复盘页）：**owner 签字沿革**——2026-10-05 owner 指示
@@ -117,6 +134,35 @@ export interface ReviewQuoteView {
   detail: string | null
 }
 
+/**
+ * `/api/enrich` 基础信息段（review-loop：TQ-Local 只读兜底的结构面）。
+ * 文本一律**原样字符串**（换算归页面）；不可用时全 null + detail。
+ * routes 层不 import `src/data/**`——本类型是出口的结构面（装配点适配）。
+ */
+export interface ReviewBasicsView {
+  available: boolean
+  /** `HSStockKind` 原文（`0`=指数 / `1`=A股主板 / `7`=基金 …）。 */
+  kind: string | null
+  /** `J_start` 原文（`'0'` 归一为 null）。 */
+  listedAt: string | null
+  region: string | null
+  industry: string | null
+  /** 流通股本（万股，原样字符串）。 */
+  floatSharesWan: string | null
+  /** 总股本（万股，原样字符串）。 */
+  totalSharesWan: string | null
+  detail: string | null
+}
+
+/** `/api/day` 当日清单元素（`scanDailyCardTargets` 结构面）。 */
+export interface ReviewDayTarget {
+  code: string
+  name: string
+  path: string
+  cardCount: number
+  hasAinote: boolean
+}
+
 export type ReviewRouteHandler = (req: TraderKitHttpRequest, res: TraderKitHttpResponse) => Promise<void>
 
 /** `createReviewHandler` 依赖（tasks 2.8 六组 seam；全部显式注入，handler 无全局副作用）。 */
@@ -166,6 +212,37 @@ export interface ReviewHandlerDeps {
   writeKey: string
   /** 回溯上限（默认 6，enrich 内部 clamp 到 [1,6]）。 */
   backtrackLimit?: number
+  // ⑦ review-loop（面板/当日状态/名称兜底/首卡建档）
+  /** 当日有卡标的清单（`traderKit.review.scanDailyCardTargets` 结构面；未注入 → `/api/day` 显式 501）。 */
+  scanDailyCardTargets?(tradeDate: string): Promise<Array<ReviewDayTarget> & { warnings: string[] }>
+  /** 运行摘要读取（`src/summary/run-report.ts` 唯一实现；未注入 → runReport=null）。 */
+  readRunReport?(path: string): Promise<RunReport | null>
+  /** 运行摘要路径（`src/summary/run-report.ts` 唯一实现）。 */
+  runReportPath?(dataRoot: string, tradeDate: string): string
+  /** 当日盘面 md 存在性元信息（`src/summary/brief.ts` 唯一实现；未注入 → brief=null）。 */
+  readBriefMeta?(dataRoot: string, tradeDate: string): Promise<BriefMeta>
+  /**
+   * TQ-Local 只读兜底（名称层②第三级；`traderKit.data.stockBasics` 结构面）。
+   * 未注入 → 该级跳过（名称保持既有层结论）。仅在层①未命中且 T2/S8 与行情源均未取得时调用。
+   */
+  lookupStockBasics?(code: string): Promise<{
+    available: boolean
+    name: string | null
+    kind: string | null
+    listedAt: string | null
+    region: string | null
+    industry: string | null
+    floatSharesWan: string | null
+    totalSharesWan: string | null
+    notes: string[]
+  }>
+  /**
+   * 首卡懒创建（review-loop：写卡成功后 **fire-and-forget** 触发；未注入 → 跳过）。
+   * 建档成败 MUST NOT 影响写卡响应；失败经 `logWarning` 与工具告警可见。
+   */
+  ensureStockProfile?(input: { code: string; name?: string | null }): Promise<EnsureProfileResult>
+  /** 异步动作的告警出口（缺省静默；装配点接插件 logger）。 */
+  logWarning?(message: string): void
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +639,42 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     } else {
       name = { available: false, name: null, nameSource: null, confidence: null, detail: 'T2/S8 反查与行情快照均未取得名称' }
     }
+    // 名称层②第三级：TQ-Local 只读兜底（review-loop owner 裁决 2026-10-06）。
+    // 调用条件（spec）：层①（本地历史 frontmatter）未命中 **且** 前两级均未取得名称；
+    // 层①命中时零 TQ 请求（MUST NOT 覆盖既有层结论）。
+    let basics: ReviewBasicsView | null = null
+    if (name.available === false && deps.lookupStockBasics !== undefined) {
+      let localKnown: string | null = null
+      try {
+        localKnown = (await deps.resolveLocalName(code)).value
+      } catch {
+        localKnown = null // 本地层读取失败按未命中处置（不影响兜底可用性）
+      }
+      if (localKnown === null) {
+        try {
+          const b = await deps.lookupStockBasics(code)
+          basics = {
+            available: b.available,
+            kind: b.kind,
+            listedAt: b.listedAt,
+            region: b.region,
+            industry: b.industry,
+            floatSharesWan: b.floatSharesWan,
+            totalSharesWan: b.totalSharesWan,
+            detail: b.available ? null : (b.notes.join('；') || 'TQ-Local 未取得基础信息'),
+          }
+          if (b.available && b.name !== null && b.name !== '') {
+            name = { available: true, name: b.name, nameSource: 'tq-local', confidence: 'high', detail: null }
+          } else if (b.available) {
+            name.detail = 'TQ-Local 命中但未返回名称（Name 为空）'
+          } else {
+            name.detail = (name.detail ?? '') + '；TQ-Local 兜底不可用：' + (b.notes.join('；') || '未知原因')
+          }
+        } catch (e) {
+          basics = { available: false, kind: null, listedAt: null, region: null, industry: null, floatSharesWan: null, totalSharesWan: null, detail: describeCause(e) }
+        }
+      }
+    }
     writeJson(res, 200, {
       code,
       tradeDate: {
@@ -575,6 +688,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       quote,
       concepts,
       limitReason,
+      basics,
     })
   }
 
@@ -666,6 +780,16 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         clientRequestId,
         writtenAt: formatZonedIso(now),
       })
+      // review-loop：首卡懒创建（异步解耦——不 await、不影响写卡响应；失败只告警）。
+      const ensure = deps.ensureStockProfile
+      if (ensure !== undefined) {
+        void ensure({ code, name: name ?? null }).then(
+          (outcome) => {
+            for (const w of outcome.warnings) deps.logWarning?.(`[dsh-trader-kit] 首卡建档：${w}`)
+          },
+          (e: unknown) => deps.logWarning?.(`[dsh-trader-kit] 首卡建档失败（不影响写卡）：${describeCause(e)}`),
+        )
+      }
     } catch (e) {
       if (e instanceof DocMismatchError) {
         writeJsonError(res, 409, 'DOC_MISMATCH', e.message)
@@ -775,6 +899,100 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     }
   }
 
+  /**
+   * `GET /api/day`（review-loop：面板当日状态读接口；**纯本地、零出站**）。
+   * 数据：当日有卡标的清单（scanDailyCardTargets）+ 运行摘要四态（readRunReport）
+   * + 盘面 md 存在性（readBriefMeta）；缺省交易日经 T0 解析（MUST NOT 读系统日期）。
+   */
+  async function handleDay(res: TraderKitHttpResponse, query: Record<string, string>): Promise<void> {
+    if (deps.dataRoot === '') {
+      writeJson(res, 200, {
+        tradeDate: null,
+        dateSource: 'unavailable',
+        targets: [],
+        runReport: null,
+        brief: null,
+        error: 'DATA_ROOT_UNCONFIGURED',
+        message: '数据根未配置——请在宿主 profile 的 dsh-trader-kit 配置段设置 dataRoot（指向含 DB/ 的数据根目录）',
+        warnings: [],
+      })
+      return
+    }
+    const dateParam = query.date ?? ''
+    let tradeDate: string | null = null
+    let dateSource: 'requested' | 'resolved' | 'unavailable' = 'unavailable'
+    if (dateParam !== '') {
+      const canonical = toCanonicalDateParam(dateParam)
+      if (canonical === null) {
+        writeJsonError(res, 400, 'INVALID_DATE', `非法日期 '${dateParam}'——期望 canonical YYYY-MM-DD（兼容 YYYYMMDD，归一经 src/data/date.ts）`)
+        return
+      }
+      tradeDate = canonical
+      dateSource = 'requested'
+    } else {
+      const t0 = await deps.resolveTradeDate({})
+      tradeDate = t0.value
+      dateSource = t0.value !== null ? 'resolved' : 'unavailable'
+    }
+    const warnings: string[] = []
+    let targets: ReviewDayTarget[] = []
+    let runReport: RunReport | null = null
+    let brief: BriefMeta | null = null
+    if (tradeDate !== null) {
+      if (deps.scanDailyCardTargets !== undefined) {
+        const listed = await deps.scanDailyCardTargets(tradeDate)
+        targets = listed.map((t) => ({ code: t.code, name: t.name, path: t.path, cardCount: t.cardCount, hasAinote: t.hasAinote }))
+        warnings.push(...(listed.warnings ?? []))
+      } else {
+        warnings.push('scanDailyCardTargets 未接线（当日清单不可得）')
+      }
+      if (deps.readRunReport !== undefined && deps.runReportPath !== undefined) {
+        try {
+          runReport = await deps.readRunReport(deps.runReportPath(deps.dataRoot, tradeDate))
+        } catch (e) {
+          warnings.push('运行摘要读取失败：' + describeCause(e))
+        }
+      }
+      if (deps.readBriefMeta !== undefined) {
+        try {
+          brief = await deps.readBriefMeta(deps.dataRoot, tradeDate)
+        } catch (e) {
+          warnings.push('盘面 md 状态读取失败：' + describeCause(e))
+        }
+      }
+    } else {
+      warnings.push('交易日不可得（可能为休市日/盘前）——可在请求中显式传 date')
+    }
+    writeJson(res, 200, { tradeDate, dateSource, targets, runReport, brief, warnings })
+  }
+
+  /** 整理意图（owner 2026-10-06 追授；进程内记忆——意图天然短暂，重启即失可接受）。 */
+  let lastOrganizeIntent: { code: string; date: string | null; registeredAt: string } | null = null
+
+  /** POST /api/organize：登记当前标的的整理意图并返回固定指令（agent 由用户在 DSH 会话发送触发）。 */
+  async function handleOrganize(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
+    const body = await readCardActionBody(req, res)
+    if (body === null) return
+    const codeRaw = body.code
+    const code = typeof codeRaw === 'string' ? normalizeCode(codeRaw) : null
+    if (code === null) {
+      const invalid = invalidCodeBody(typeof codeRaw === 'string' ? codeRaw : String(codeRaw))
+      writeJsonError(res, 400, invalid.error, invalid.message, { codeRaw: typeof codeRaw === 'string' ? codeRaw : null })
+      return
+    }
+    let date = ''
+    if (body.date !== undefined && body.date !== null && body.date !== '') {
+      if (typeof body.date !== 'string' || !CANONICAL_DATE_RE.test(body.date) || toCanonicalDateParam(body.date) === null) {
+        writeJsonError(res, 400, 'INVALID_DATE', `非法日期 '${String(body.date)}'——须为 canonical YYYY-MM-DD`)
+        return
+      }
+      date = body.date
+    }
+    const registeredAt = formatZonedIso(deps.now())
+    lastOrganizeIntent = { code, date: date !== '' ? date : null, registeredAt }
+    writeJson(res, 200, { status: 'registered', code, date: date !== '' ? date : null, prompt: buildOrganizePrompt(code, date), registeredAt })
+  }
+
   function handleAsset(res: TraderKitHttpResponse, rel: string): void {
     if (!isSafeAssetName(rel)) {
       writeJsonError(res, 404, 'NOT_FOUND', '资产不存在（穿越/白名单外扩展名一律 404，避免目录探测）')
@@ -816,6 +1034,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       await handleEnrich(req, res, parseQuery(query))
       return
     }
+    if (rawPath === pageExact + '/api/day') {
+      if (method !== 'GET') {
+        writeMethodNotAllowed(res, 'GET')
+        return
+      }
+      await handleDay(res, parseQuery(query))
+      return
+    }
     if (rawPath === pageExact + '/api/dates') {
       if (method !== 'GET') {
         writeMethodNotAllowed(res, 'GET')
@@ -846,6 +1072,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         return
       }
       await handleCardDelete(req, res)
+      return
+    }
+    if (rawPath === pageExact + '/api/organize') {
+      if (method !== 'POST') {
+        writeMethodNotAllowed(res, 'POST')
+        return
+      }
+      await handleOrganize(req, res)
       return
     }
     if (rawPath === pageExact + '/api' || rawPath.startsWith(pageExact + '/api/')) {
@@ -899,10 +1133,11 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
           return
         }
         // owner 裁决 2026-10-05：写接口凭据② = 回环来源 + 固定密钥（spec 写接口认证修订）；
-        // 修订/删除两接口（owner 同日追授）凭据同款。
+        // 修订/删除两接口（owner 同日追授）与整理意图（owner 2026-10-06 追授）凭据同款。
         if (method === 'POST' && (rawPath === pageExact + '/api/card'
           || rawPath === pageExact + '/api/card/update'
-          || rawPath === pageExact + '/api/card/delete') && writeCredentialValid(req)) {
+          || rawPath === pageExact + '/api/card/delete'
+          || rawPath === pageExact + '/api/organize') && writeCredentialValid(req)) {
           await route(req, res, rawPath, query, false)
           return
         }
@@ -1013,6 +1248,33 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
       return { name: q.name, price: q.price, pct: q.pct, ltsz: q.ltsz, zsz: q.zsz, ltgb: q.ltgb }
     },
     // 本地段名称（层①/③）：不注入反查——/api/local 的名称取值域零网络（§12.4）。
+    // review-loop：当日状态（清单/运行摘要/盘面 md）+ 名称兜底 + 首卡建档。
+    scanDailyCardTargets: (tradeDate) => {
+      const reviewApi = (api.review ?? {}) as { scanDailyCardTargets?: (d: string) => Promise<Array<ReviewDayTarget> & { warnings: string[] }> }
+      if (typeof reviewApi.scanDailyCardTargets !== 'function') {
+        return Promise.resolve(Object.assign([] as ReviewDayTarget[], { warnings: ['traderKit.review.scanDailyCardTargets 未挂载'] }))
+      }
+      return reviewApi.scanDailyCardTargets(tradeDate)
+    },
+    readRunReport,
+    runReportPath,
+    readBriefMeta,
+    lookupStockBasics: async (code) => {
+      const b = await data.stockBasics({ code })
+      return {
+        available: b.available,
+        name: b.name,
+        kind: b.kind,
+        listedAt: b.listedAt,
+        region: b.region,
+        industry: b.industry,
+        floatSharesWan: b.floatSharesWan,
+        totalSharesWan: b.totalSharesWan,
+        notes: b.notes,
+      }
+    },
+    ensureStockProfile: (input) => createStockProfileIfMissing({ dataRoot, code: input.code, name: input.name }),
+    logWarning: (message) => logger.warn(message),
     resolveLocalName: (code) =>
       localNameResolver.resolve(code).then((r) => ({
         value: r.value,
@@ -1033,10 +1295,12 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     { kind: 'exact', path: REVIEW_PAGE_PATH, handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/local', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/enrich', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/day', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/dates', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/update', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/delete', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/organize', handler },
     { kind: 'prefix', path: REVIEW_PAGE_PATH, handler },
   ]
   ctx.effect(() => {

@@ -170,6 +170,7 @@
   - 验收：spec「四区块布局」与「交互态与输入法」场景通过（含焦点顺序断言）
   - 依赖：`blocked_by: change 1`（内嵌内核版本结论）、7.1
   - 登记（2026-09-27，路由/前端线）：src/client/review/index.html.ts（内联模板字符串随 tsdown 进 lib）；四区块标记有序/320px 无横向滚动样式约束（box-sizing/max-width:100%/overflow-wrap）/预留区 disabled+tabindex="-1" 断言见 review-page.test.ts；真机窄视口核对归 4.9。
+  - 修订登记（2026-10-06，owner 追授「直接在这里做一个按钮 整理」）：B3 预留占位按钮替换为**「整理」动作按钮**——点击经 `POST /review/api/organize`（写凭据同写卡）登记当前标的/日期意图，并把服务端固定指令模板复制进剪贴板，用户到 DSH 会话粘贴发送触发 agent（页面与 agent 无通道是既定边界；MUST NOT 由插件自建 agent 运行，沿 review-loop 草案纪律；指令为服务端单一事实源 `buildOrganizePrompt`，页面零拼接）。无标的/只读态禁用。spec 新增「B3 工具框整理动作」需求 + 三处预留区表述修订。
 - [x] 4.2 B1：代码 + 名称分层展示（层① 本地 frontmatter / 层③ 仅代码来自 `/api/local` 且带 `nameSource`；层② T2/S8 由 `/api/enrich` 返回，**仅当本地段为 `code-only` 时补位替换**并更新来源标注）、含「名称未获取」态、标签与最近涨停原因（异步补位 + 单项降级显示「不可用 + 原因」+ 按源业务日标注）
   - 产物：B1 渲染逻辑
   - 验收：`/api/enrich` 挂起/失败时 B1 仍显示本地层名称或代码 + 「名称未获取」；层①命中时网络层 MUST NOT 覆盖；不阻塞输入
