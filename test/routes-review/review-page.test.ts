@@ -80,6 +80,7 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('rv-cal-sel') // 选中日高亮
     expect(REVIEW_HTML).toContain('id="rv-cal-clear"') // 清除 = 回到服务端自动归属
     expect(REVIEW_HTML).toContain('calSetOpen') // 开合/外点收起布点
+    expect(REVIEW_HTML).toMatch(/function applyDateChange\(\)[\s\S]*?loadEnrich\(\)/) // 切日期重跑网络段（B1 按新日期补位）
     // owner 2026-10-05：状态行去冗余保持干净——日期可得时不朗读来源/待确认。
     expect(REVIEW_HTML).not.toContain('归属待确认')
     expect(REVIEW_HTML).not.toContain('查看日期：')

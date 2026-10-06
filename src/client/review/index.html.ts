@@ -332,6 +332,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     currentDate = datePicked ? v : null;
     if (pendingOwner === null) hideOwnerConfirm();
     loadLocal(false);
+    loadEnrich(); // 切日期同步重跑网络段：B1 标签/涨停原因按新日期补位，MUST NOT 清空不补（2026-10-05）
   }
 
   function wireCalendar() {
