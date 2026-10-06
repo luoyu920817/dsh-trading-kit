@@ -193,6 +193,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   var pendingRequestId = null;   // 提交意图标识（失败重试复用同一 id）
   var enrichGen = 0;             // 网络段代际（切换即作废在途响应）
   var enrichController = null;   // 网络段 AbortController
+  var enrichRenderedFor = null;  // 最近一次 enrich 渲染所属标的（B1 清空保留判定——owner 2026-10-05）
   var composing = false;         // 输入法组合期
 
   function byId(id) { return document.getElementById(id); }
@@ -252,8 +253,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     else codeEl.textContent = '—';
     // owner 2026-10-05：页面本身运行在 TDX 内，跳转 TDX 的联动链接移除
     //（spike 决策①的 treeid 通道保留在文档与后续场景：页面外联动时再启用）。
-    byId('rv-concepts').textContent = '';
-    byId('rv-limit').textContent = '';
+    // 标签/涨停原因 = enrich 段渲染内容：同一标的的本地段静默回读（保存/编辑/删除后）
+    // MUST NOT 清空不补（owner 2026-10-05 反馈）；仅标的切换（renderedFor 不一致）才清空。
+    if (enrichRenderedFor !== currentCode) {
+      byId('rv-concepts').textContent = '';
+      byId('rv-limit').textContent = '';
+    }
     updateNameLine();
   }
 
@@ -657,6 +662,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   function renderEnrichUnavailable(msg) {
+    enrichRenderedFor = currentCode; // 不可用态也归属当前标的（本地回读不清空不补）
     byId('rv-limit').textContent = '涨停原因：不可用（' + msg + '）——可能为休市日/盘前，请在 B2 显式选择最近交易日重试';
     byId('rv-concepts').textContent = '';
     var none = document.createElement('span');
@@ -699,6 +705,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   function renderEnrich(data) {
+    enrichRenderedFor = currentCode; // 渲染归属当前标的（后续本地回读不清空——owner 2026-10-05）
     // B2 默认归属日补位（仅当用户未显式选日）。
     if (!datePicked && data.tradeDate !== null && data.tradeDate !== undefined && data.tradeDate.value !== null && byId('rv-date').value === '') {
       currentDate = data.tradeDate.value;
@@ -776,6 +783,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     nameLocal = null;
     enrichName = null;
     lastLocal = null;
+    enrichRenderedFor = null; // 标的切换：enrich 渲染归属作废，B1 清空重取
     datePicked = false;
     currentDate = null;
     byId('rv-date').value = '';
