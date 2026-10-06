@@ -104,11 +104,11 @@ async function drive(handler: TraderKitWebRoute['handler'], url: string, headers
   return rec
 }
 
-describe('路由表（tasks 2.1：六路由注册 + effect/disposer）', () => {
-  it('注册恰 6 条路由：5 条 exact（页面 + 4 API）+ 1 条 prefix（直链/资产兜底），经 ctx.effect', () => {
+describe('路由表（tasks 2.1：八路由注册 + effect/disposer）', () => {
+  it('注册恰 8 条路由：7 条 exact（页面 + 6 API）+ 1 条 prefix（直链/资产兜底），经 ctx.effect', () => {
     const h = createHarness()
     registerReviewRoutes(h.ctx)
-    expect(h.routes).toHaveLength(6)
+    expect(h.routes).toHaveLength(8)
     const exacts = h.routes.filter((r) => r.kind === 'exact').map((r) => r.path)
     expect(exacts).toEqual([
       REVIEW_PAGE_PATH,
@@ -116,6 +116,8 @@ describe('路由表（tasks 2.1：六路由注册 + effect/disposer）', () => {
       REVIEW_PAGE_PATH + '/api/enrich',
       REVIEW_PAGE_PATH + '/api/dates',
       REVIEW_PAGE_PATH + '/api/card',
+      REVIEW_PAGE_PATH + '/api/card/update',
+      REVIEW_PAGE_PATH + '/api/card/delete',
     ])
     const prefixes = h.routes.filter((r) => r.kind === 'prefix').map((r) => r.path)
     expect(prefixes).toEqual([REVIEW_PAGE_PATH])
@@ -134,7 +136,7 @@ describe('路由表（tasks 2.1：六路由注册 + effect/disposer）', () => {
   it('disposer 卸载：路由表清空，无残留处理器', () => {
     const h = createHarness()
     registerReviewRoutes(h.ctx)
-    expect(h.routes).toHaveLength(6)
+    expect(h.routes).toHaveLength(8)
     for (const disposer of h.disposers) disposer()
     expect(h.routes).toHaveLength(0)
   })
@@ -159,11 +161,11 @@ describe('与 change 1 探针路由共存（tasks 2.1 验收：重复 (kind,path
     const h = createHarness()
     registerProbe(h.ctx)
     expect(() => registerReviewRoutes(h.ctx)).not.toThrow()
-    expect(h.routes).toHaveLength(7) // 探针 1 + 复盘 6
+    expect(h.routes).toHaveLength(9) // 探针 1 + 复盘 8
     const pairs = h.routes.map((r) => r.kind + ' ' + r.path)
-    expect(new Set(pairs).size).toBe(7) // 无重复 (kind, path)
+    expect(new Set(pairs).size).toBe(9) // 无重复 (kind, path)
     expect(pairs).toContain('exact ' + PROBE_PATH)
-    expect(pairs.filter((p) => p.startsWith('exact ' + REVIEW_BASE_PATH + '/review')).length).toBe(5)
+    expect(pairs.filter((p) => p.startsWith('exact ' + REVIEW_BASE_PATH + '/review')).length).toBe(7)
   })
 
   it('宿主 match() 语义下：/review/api/* 由 exact 命中（不被 prefix 直链吞掉）', async () => {
@@ -240,7 +242,7 @@ describe('C 层开关两态（tasks 2.2；owner 2026-10-05 签字「全部免签
 })
 
 describe('装配面结构（挂载后可观察）', () => {
-  it('apply 全量挂载（探针开启）→ 数据工具 3 + tq_skill_manage 1 + 每日汇总 4 + 复盘路由 6 + 探针 1，互不冲突', () => {
+  it('apply 全量挂载（探针开启）→ 数据工具 3 + tq_skill_manage 1 + 每日汇总 4 + 复盘路由 8 + 探针 1，互不冲突', () => {
     const h = createHarness({ dataRoot: makeTempRoot() })
     const registeredTools: unknown[] = []
     const ctxObj = h.ctx as unknown as Record<string, unknown>
@@ -251,6 +253,6 @@ describe('装配面结构（挂载后可观察）', () => {
     expect(() => apply(h.ctx, resolveTraderKitConfig({}))).not.toThrow()
     // 波 4 起：+ tq_skill_manage = 8。
     expect(registeredTools.length).toBe(8)
-    expect(h.routes).toHaveLength(7)
+    expect(h.routes).toHaveLength(9) // 复盘 8 + 探针 1
   })
 })

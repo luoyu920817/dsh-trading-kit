@@ -76,6 +76,8 @@ export interface SeamRecords {
   limitCalls: Array<{ code: string; date: string }>
   conceptCalls: Array<{ code: string; date?: string }>
   quoteCalls: string[]
+  updateCalls: Array<{ anchor: string; body: string }>
+  deleteCalls: string[]
   locateCalls: number
 }
 
@@ -117,7 +119,7 @@ export interface MakeDepsOptions {
 /** handler 依赖工厂：真实 store + 真实临时目录 + 函数注入的取数 seam（带调用记录）。 */
 export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDeps; records: SeamRecords } {
   const dataRoot = options.dataRoot ?? makeTempRoot()
-  const records: SeamRecords = { limitCalls: [], conceptCalls: [], quoteCalls: [], locateCalls: 0 }
+  const records: SeamRecords = { limitCalls: [], conceptCalls: [], quoteCalls: [], updateCalls: [], deleteCalls: [], locateCalls: 0 }
   const limitFn: (input: { code: string; date: string }) => Promise<LimitDayResponse> = (input) => {
     records.limitCalls.push(input)
     const given = options.limitResponse
@@ -146,6 +148,15 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
     locateDoc: locateDocCounted,
     parseDoc,
     appendCard,
+    // 修订/删除桩（owner 2026-10-05 追授）：记录调用即返回成功；真实字节语义在 store-modify 单测覆盖。
+    updateCard: async (input) => {
+      records.updateCalls.push({ anchor: input.anchor, body: input.body })
+      return { status: 'updated' as const, anchor: input.anchor, path: join(dataRoot, 'doc.md'), warnings: [] }
+    },
+    deleteCard: async (input) => {
+      records.deleteCalls.push(input.anchor)
+      return { status: 'deleted' as const, anchor: input.anchor, path: join(dataRoot, 'doc.md'), warnings: [] }
+    },
     resolveTradeDate: async () => ({
       value: STUB_TRADE_DATE,
       source: 'T1-tradeDate',

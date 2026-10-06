@@ -9,6 +9,8 @@
  * | GET  | …/review/api/local            | exact     | 纯本地段：locateDoc+parseDoc+本地名称层①/③+有卡日期，零出站网络 |
  * | GET  | …/review/api/enrich           | exact     | 网络段：名称层②（T2/S8）+ 标签（T2）+ 涨停原因（T1 有界回溯） |
  * | POST | …/review/api/card             | exact     | 写卡（**只认 A 层**；clientRequestId 幂等） |
+ * | POST | …/review/api/card/update     | exact     | 卡片修订（owner 2026-10-05 追授；凭据同写卡；锚点不变仅改正文） |
+ * | POST | …/review/api/card/delete     | exact     | 卡片删除（owner 2026-10-05 追授；凭据同写卡；整节移除） |
  * | GET  | …/review/api/dates            | exact     | 该标的有卡日期（月桶扫描，B2 提示用） |
  * | GET  | …/review（prefix）            | prefix    | 直链 /review/<code> + /review/assets/<name> 的兜底匹配 |
  * MUST NOT 注册 GET /review/api/context（已废止——本地段与网络段 MUST 为独立请求）。
@@ -38,7 +40,7 @@ import type { Dirent } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Context, TraderKitHttpRequest, TraderKitHttpResponse, TraderKitWebRoute } from '../context-types.ts'
 import { REVIEW_HTML, REVIEW_STATE_PLACEHOLDER } from '../client/review/index.html.ts'
-import { normalizeCode } from '../review/anchor.ts'
+import { CARD_ANCHOR_RE, normalizeCode } from '../review/anchor.ts'
 import { createNameResolver, createTradeDateResolver, type ResolveTradeDateFn, type TradeDateResolver } from '../review/context.ts'
 import {
   BACKTRACK_LIMIT_DEFAULT,
@@ -53,7 +55,7 @@ import {
 } from '../review/enrich.ts'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { formatZonedIso } from '../review/format.ts'
-import { appendCard, DocMismatchError, ConcurrentWriteError, locateDoc, parseDoc, type Card, type Loc } from '../review/store.ts'
+import { appendCard, ConcurrentWriteError, deleteCard, DocMismatchError, locateDoc, parseDoc, AnchorNotFoundError, updateCard, type Card, type Loc } from '../review/store.ts'
 import { resolveArea } from '../paths/resolve.ts'
 
 /** basePath（沿探针先例内联单一事实源；Config 接管归 change 2）。 */
@@ -133,6 +135,9 @@ export interface ReviewHandlerDeps {
     path: string
     warnings: string[]
   }>
+  /** 卡片修订/删除（owner 2026-10-05 追授；未注入 → 对应接口显式 501）。 */
+  updateCard?(input: { anchor: string; body: string; dataRoot: string }): Promise<{ status: 'updated'; anchor: string; path: string; warnings: string[] }>
+  deleteCard?(input: { anchor: string; dataRoot: string }): Promise<{ status: 'deleted'; anchor: string; path: string; warnings: string[] }>
   // ③ 取数（change 2 service 出口）
   resolveTradeDate: TradeDateResolver['resolve']
   getLimitReason: LimitDayFetcher
@@ -674,6 +679,102 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     }
   }
 
+  /** 卡片修订/删除共用：JSON 体解析 + 锚点校验（owner 2026-10-05 追授）。 */
+  async function readCardActionBody(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<Record<string, unknown> | null> {
+    const raw = await readBody(req)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      writeJsonError(res, 400, 'INVALID_JSON', '请求体不是合法 JSON')
+      return null
+    }
+    if (parsed === null || typeof parsed !== 'object') {
+      writeJsonError(res, 400, 'INVALID_JSON', '请求体须为 JSON 对象')
+      return null
+    }
+    return parsed as Record<string, unknown>
+  }
+
+  function anchorParamError(value: unknown): string | null {
+    if (typeof value !== 'string' || value.trim() === '') {
+      return '缺少 anchor——卡片锚点 card-YYYYMMDD-代码-HHMM[-序号]（页面从卡片数据取得，MUST NOT 手工拼接）'
+    }
+    if (!CARD_ANCHOR_RE.test(value.trim())) {
+      return `非法 anchor '${value.trim()}'——期望 card-YYYYMMDD-代码-HHMM[-序号] 形态（经 CARD_ANCHOR_RE 整体匹配）`
+    }
+    return null
+  }
+
+  /** POST /api/card/update：锚点不变、仅替换正文（写凭据/错误分档同写卡）。 */
+  async function handleCardUpdate(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
+    if (deps.updateCard === undefined) {
+      writeJsonError(res, 501, 'NOT_IMPLEMENTED', '卡片修订出口未接线（updateCard 未注入）')
+      return
+    }
+    const body = await readCardActionBody(req, res)
+    if (body === null) return
+    const anchorError = anchorParamError(body.anchor)
+    if (anchorError !== null) {
+      writeJsonError(res, 400, 'INVALID_ANCHOR', anchorError)
+      return
+    }
+    const anchor = (body.anchor as string).trim()
+    const cardBody = body.body
+    if (typeof cardBody !== 'string' || cardBody.trim() === '') {
+      writeJsonError(res, 400, 'EMPTY_BODY', 'body 须为非空白字符串——删除卡片请走 /api/card/delete（MUST NOT 以空正文冒充删除）')
+      return
+    }
+    if (cardBody.length > BODY_LIMIT) {
+      writeJsonError(res, 400, 'BODY_TOO_LONG', `body 超限（上限 ${BODY_LIMIT} 字符，实际 ${cardBody.length} 字符）`, { limit: BODY_LIMIT, actual: cardBody.length })
+      return
+    }
+    try {
+      const result = await deps.updateCard({ anchor, body: cardBody, dataRoot: deps.dataRoot })
+      writeJson(res, 200, { status: 'updated', anchor: result.anchor, path: result.path, warnings: result.warnings })
+    } catch (e) {
+      if (e instanceof AnchorNotFoundError) {
+        writeJsonError(res, 404, 'ANCHOR_NOT_FOUND', e.message)
+        return
+      }
+      if (e instanceof ConcurrentWriteError) {
+        writeJsonError(res, 409, 'CONCURRENT_WRITE', e.message)
+        return
+      }
+      throw e
+    }
+  }
+
+  /** POST /api/card/delete：整节移除（写凭据/错误分档同写卡；两段确认由页面承担）。 */
+  async function handleCardDelete(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
+    if (deps.deleteCard === undefined) {
+      writeJsonError(res, 501, 'NOT_IMPLEMENTED', '卡片删除出口未接线（deleteCard 未注入）')
+      return
+    }
+    const body = await readCardActionBody(req, res)
+    if (body === null) return
+    const anchorError = anchorParamError(body.anchor)
+    if (anchorError !== null) {
+      writeJsonError(res, 400, 'INVALID_ANCHOR', anchorError)
+      return
+    }
+    const anchor = (body.anchor as string).trim()
+    try {
+      const result = await deps.deleteCard({ anchor, dataRoot: deps.dataRoot })
+      writeJson(res, 200, { status: 'deleted', anchor: result.anchor, path: result.path, warnings: result.warnings })
+    } catch (e) {
+      if (e instanceof AnchorNotFoundError) {
+        writeJsonError(res, 404, 'ANCHOR_NOT_FOUND', e.message)
+        return
+      }
+      if (e instanceof ConcurrentWriteError) {
+        writeJsonError(res, 409, 'CONCURRENT_WRITE', e.message)
+        return
+      }
+      throw e
+    }
+  }
+
   function handleAsset(res: TraderKitHttpResponse, rel: string): void {
     if (!isSafeAssetName(rel)) {
       writeJsonError(res, 404, 'NOT_FOUND', '资产不存在（穿越/白名单外扩展名一律 404，避免目录探测）')
@@ -731,6 +832,22 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       await handleCard(req, res)
       return
     }
+    if (rawPath === pageExact + '/api/card/update') {
+      if (method !== 'POST') {
+        writeMethodNotAllowed(res, 'POST')
+        return
+      }
+      await handleCardUpdate(req, res)
+      return
+    }
+    if (rawPath === pageExact + '/api/card/delete') {
+      if (method !== 'POST') {
+        writeMethodNotAllowed(res, 'POST')
+        return
+      }
+      await handleCardDelete(req, res)
+      return
+    }
     if (rawPath === pageExact + '/api' || rawPath.startsWith(pageExact + '/api/')) {
       // 含已废止的 /api/context——一律 404（MUST NOT 注册 context）。
       writeJsonError(res, 404, 'NOT_FOUND', '未知 API 路径')
@@ -781,8 +898,11 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
           await route(req, res, rawPath, query, true)
           return
         }
-        // owner 裁决 2026-10-05：写接口凭据② = 回环来源 + 固定密钥（spec 写接口认证修订）。
-        if (method === 'POST' && rawPath === pageExact + '/api/card' && writeCredentialValid(req)) {
+        // owner 裁决 2026-10-05：写接口凭据② = 回环来源 + 固定密钥（spec 写接口认证修订）；
+        // 修订/删除两接口（owner 同日追授）凭据同款。
+        if (method === 'POST' && (rawPath === pageExact + '/api/card'
+          || rawPath === pageExact + '/api/card/update'
+          || rawPath === pageExact + '/api/card/delete') && writeCredentialValid(req)) {
           await route(req, res, rawPath, query, false)
           return
         }
@@ -861,6 +981,9 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     locateDoc,
     parseDoc,
     appendCard,
+    // 修订/删除（owner 2026-10-05 追授）：与追加同一 store 实现，路由层只做凭据与校验。
+    updateCard,
+    deleteCard,
     // T0 服务出口 fetchedAt 可空，context.ts 的 ResolveTradeDateFn 形状偏紧——装配点结构适配（不改 context.ts）。
     resolveTradeDate: createTradeDateResolver(data.resolveTradeDate as unknown as ResolveTradeDateFn).resolve,
     getLimitReason: data.getLimitReason,
@@ -912,6 +1035,8 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/enrich', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/dates', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/update', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/delete', handler },
     { kind: 'prefix', path: REVIEW_PAGE_PATH, handler },
   ]
   ctx.effect(() => {

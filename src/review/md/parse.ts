@@ -188,8 +188,9 @@ export function parseDocument(text: string): DocumentParse {
   return { eol, bom: false, frontmatter, sections }
 }
 
-const CARD_META_RE = /^-\s+writtenAt:\s*(.*)$/
-const CARD_REQUEST_RE = /^-\s+clientRequestId:\s*(.*)$/
+/** 卡片 meta 行（导出供 updateCard 判定「meta 块边界」——编辑须保留这些行字节）。 */
+export const CARD_META_RE = /^-\s+writtenAt:\s*(.*)$/
+export const CARD_REQUEST_RE = /^-\s+clientRequestId:\s*(.*)$/
 const AINOTE_META_RE = /^-\s+([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/
 
 /** 跳过正文起始的结构性空行（元信息块与正文之间的分隔空行不计入正文）。 */

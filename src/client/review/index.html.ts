@@ -93,6 +93,12 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   button { padding: 5px 14px; font-size: 13px; background: #c50e29; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
   button:disabled { background: #3a3a3a; color: #777777; cursor: not-allowed; }
   button#rv-reserve, button.copy-btn { background: #333333; color: #ffa500; font-size: 12px; padding: 3px 8px; }
+  .card-action { background: #333333; color: #cccccc; font-size: 12px; padding: 2px 8px; margin-left: 6px; }
+  .card-action:hover { color: #ffffff; }
+  .card-action.primary { background: #c50e29; color: #ffffff; }
+  .card-action.danger { background: #c50e29; color: #ffffff; }
+  .card-edit-bar { margin-top: 6px; }
+  .card-edit-bar .card-action { margin-left: 0; margin-right: 6px; }
   .card { background: #1a1a1a; border: 1px solid #333333; border-radius: 8px; padding: 8px; margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #e6e6e6; line-height: 1.6; }
   .card-head { font-size: 12px; color: #666666; padding-bottom: 4px; border-bottom: 1px solid #262626; margin-bottom: 6px; }
   .card-head span { margin-right: 10px; }
@@ -455,19 +461,121 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     return b;
   }
 
+  // ── B4 卡片动作（owner 2026-10-05 追授：编辑 = 行内 textarea 保存经 /api/card/update；
+  // 删除 = 两段确认后经 /api/card/delete；锚点文本不再展示——数据文件与复制引用保留）──
+  function postCardApi(pathSuffix, payload, done) {
+    fetch(basePath + '/review/api/card' + pathSuffix, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-write-key': (window.__REVIEW__ && window.__REVIEW__.writeKey) || '' },
+      body: JSON.stringify(payload),
+    }).then(function (resp) {
+      return resp.json().then(function (b) { return { status: resp.status, body: b }; });
+    }).then(done, function (e) {
+      done({ status: 0, body: { message: String(e) } });
+    });
+  }
+
+  function makeActionBtn(text) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'card-action';
+    b.textContent = text;
+    return b;
+  }
+
+  function enterCardEdit(card, div, bodyEl) {
+    if (div.__rvEditing === true) return;
+    div.__rvEditing = true;
+    var ta = document.createElement('textarea');
+    ta.value = card.body || '';
+    var bar = document.createElement('div');
+    bar.className = 'card-edit-bar';
+    var save = makeActionBtn('保存编辑');
+    save.className = 'card-action primary';
+    var cancel = makeActionBtn('取消');
+    bar.appendChild(save);
+    bar.appendChild(cancel);
+    bodyEl.style.display = 'none';
+    div.insertBefore(ta, bodyEl);
+    div.insertBefore(bar, bodyEl);
+    cancel.addEventListener('click', function () {
+      div.__rvEditing = false;
+      div.removeChild(ta);
+      div.removeChild(bar);
+      bodyEl.style.display = '';
+    });
+    save.addEventListener('click', function () {
+      var next = ta.value;
+      if (trim(next) === '') { setStatus('编辑内容为空——如需删除请用「删除」按钮'); return; }
+      save.disabled = true;
+      postCardApi('/update', { anchor: card.anchor, body: next }, function (r) {
+        if (r.status === 200 && r.body && r.body.status === 'updated') {
+          setStatus('已保存编辑');
+          loadLocal(true); // 静默回读：退出编辑态并渲染新正文（warnings 一并刷新）
+        } else {
+          save.disabled = false;
+          setStatus('编辑保存失败：' + describeError(r.body));
+        }
+      });
+    });
+  }
+
+  function makeDeleteButton(card) {
+    var b = makeActionBtn('删除');
+    var armed = false;
+    var timer = null;
+    b.addEventListener('click', function () {
+      if (!armed) {
+        // 两段确认：首次点击进「确认删除」态，超时自动还原（破坏性动作 MUST NOT 单击直删）。
+        armed = true;
+        b.className = 'card-action danger';
+        b.textContent = '确认删除';
+        timer = setTimeout(function () {
+          armed = false;
+          b.className = 'card-action';
+          b.textContent = '删除';
+        }, 4000);
+        return;
+      }
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      b.disabled = true;
+      postCardApi('/delete', { anchor: card.anchor }, function (r) {
+        if (r.status === 200 && r.body && r.body.status === 'deleted') {
+          setStatus('已删除卡片');
+          loadLocal(true);
+        } else {
+          armed = false;
+          b.disabled = false;
+          b.className = 'card-action';
+          b.textContent = '删除';
+          setStatus('删除失败：' + describeError(r.body));
+        }
+      });
+    });
+    return b;
+  }
+
   function makeCardNode(card) {
     var div = document.createElement('div');
     div.className = 'card';
     var head = document.createElement('div');
     head.className = 'card-head';
     var meta = document.createElement('span');
-    meta.textContent = (card.writtenAt || '') + '  ^' + (card.anchor || '');
+    // owner 2026-10-05：锚点 id 文本（^card-…）不再展示——数据文件与「复制引用」通道保留
+    meta.textContent = card.writtenAt || '';
     head.appendChild(meta);
     if (card.anchor) head.appendChild(makeCopyButton(card.anchor));
     var bodyEl = document.createElement('div');
+    bodyEl.className = 'card-body';
     bodyEl.textContent = card.body || ''; // 纯文本转义：textContent（标签字符不被解析）
     div.appendChild(head);
     div.appendChild(bodyEl);
+    if (writable && card.anchor) {
+      var editBtn = makeActionBtn('编辑');
+      editBtn.addEventListener('click', function () { enterCardEdit(card, div, bodyEl); });
+      head.appendChild(editBtn);
+      head.appendChild(makeDeleteButton(card));
+    }
     return div;
   }
 

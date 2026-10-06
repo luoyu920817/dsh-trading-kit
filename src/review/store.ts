@@ -4,6 +4,8 @@
  * 五个导出即契约（change 5 复用，MUST NOT 另写追加逻辑）：
  * `locateDoc` / `parseDoc` / `appendCard` / `appendAinote` / `scanDailyCardTargets`，
  * **一律**返回 `warnings: string[]`（空告警为 `[]`，MUST NOT 缺字段）。
+ * 另有显式修订/删除扩展（owner 2026-10-05 追授）：`updateCard` / `deleteCard`，
+ * 纪律与追加同款（见「卡片显式修订与删除」Requirement）。
  *
  * 写入纪律（契约 §4/§5）：
  * - 文档定位经 `src/paths/resolve.ts` 的 `resolveArea`（调用方 MUST NOT 自行拼接）；
@@ -30,7 +32,7 @@ import { isValidIsoDate, toCompactDate } from '../data/date.ts'
 import { ensureDir } from '../paths/fs.ts'
 import { resolveArea } from '../paths/resolve.ts'
 import { NAME_SEGMENT_MAX, sanitizeNameSegment } from '../paths/sanitize.ts'
-import { buildAnchor, normalizeCode } from './anchor.ts'
+import { buildAnchor, CARD_ANCHOR_RE, normalizeCode } from './anchor.ts'
 import { anchorTimeToHeading, formatAnchorTime, formatZonedIso } from './format.ts'
 import { encodeStoreWarning, type AInote, type Card, type StoreWarning } from './types.ts'
 import {
@@ -39,7 +41,15 @@ import {
   parseFrontmatterValues,
   type FrontmatterValues,
 } from './md/frontmatter.ts'
-import { parseDocument, toParsedAinote, toParsedCard, type DocumentParse, type ParsedSection } from './md/parse.ts'
+import {
+  CARD_META_RE,
+  CARD_REQUEST_RE,
+  parseDocument,
+  toParsedAinote,
+  toParsedCard,
+  type DocumentParse,
+  type ParsedSection,
+} from './md/parse.ts'
 
 /** 契约 §3：文档定位入参（tradeDate 为 canonical `YYYY-MM-DD`）。 */
 export type Loc = { dataRoot: string; code: string; name?: string; tradeDate: string }
@@ -65,6 +75,14 @@ export class ConcurrentWriteError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'CONCURRENT_WRITE'
+  }
+}
+
+/** 修订/删除的显式失败（锚点不存在 / 文档缺失 / 幽灵锚点；零字节变化，MUST NOT 新建文档）。 */
+export class AnchorNotFoundError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ANCHOR_NOT_FOUND'
   }
 }
 
@@ -734,6 +752,166 @@ export async function appendAinote(input: {
   })
   const status = outcome.status === 'skipped' ? 'skipped' as const : 'created' as const
   return { status, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
+}
+
+// ---------------------------------------------------------------------------
+// 显式修订与删除（owner 2026-10-05 追授：updateCard / deleteCard；spec =「卡片显式
+// 修订与删除」Requirement——锚点/meta 行字节不变、其余分节保真、写入纪律同款）
+// ---------------------------------------------------------------------------
+
+/** 卡片锚点解析（date 紧凑形 + code；正则整体匹配失败 → 非法锚点）。 */
+function parseCardAnchor(anchor: string): { compact: string; code: string } {
+  const m = CARD_ANCHOR_RE.exec(anchor)
+  if (m === null) {
+    throw new Error(`非法卡片锚点 '${anchor}'——期望 card-YYYYMMDD-代码-HHMM[-序号] 形态（经 CARD_ANCHOR_RE 整体匹配）`)
+  }
+  return { compact: m[1], code: m[2] }
+}
+
+/** 修改主流程（update/delete 共用模板）：定位 → 互斥 → re-read + stat 复核重试 → 变换 → 原子写。 */
+async function transformDailyDoc(input: {
+  anchor: string
+  dataRoot: string
+  mode: 'update' | 'delete'
+  body?: string
+}): Promise<{ status: 'updated' | 'deleted'; anchor: string; path: string; warnings: string[] }> {
+  const { compact, code } = parseCardAnchor(input.anchor)
+  const resolved = resolveArea(input.dataRoot, 'review', { code, name: '', date: compact }, { forWrite: true })
+  const hooks = activeHooks
+  const retryDelays = hooks.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
+  const notFound = (detail: string): AnchorNotFoundError =>
+    new AnchorNotFoundError(`ANCHOR_NOT_FOUND: ^${input.anchor} — ${detail}。零字节变化；MUST NOT 新建文档，请核对锚点与归属。`)
+
+  const lockKey = `${resolved.areaDirAbs}::${code}_${compact}`
+  return withLock(lockKey, async () => {
+    let lastFailure: { kind: 'mismatch' } | { kind: 'fs'; message: string } | null = null
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        await delay(retryDelays[Math.min(attempt - 1, retryDelays.length - 1)] ?? 0)
+        await hooks.onPhase?.('before-read', resolved.absPath, attempt)
+      }
+
+      // -- 定位（扫描不依赖名称段：`<代码>_*_<日期>.md` 全匹配）
+      let candidates: DocCandidate[]
+      try {
+        candidates = await scanCandidates(resolved.areaDirAbs, code, compact)
+      } catch (e) {
+        lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
+        continue
+      }
+      if (candidates.length === 0) throw notFound('该 (代码, 交易日) 不存在文档')
+      const warnings: string[] = []
+      const selected = selectCandidate(candidates)
+      if (candidates.length > 1) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
+      const targetPath = selected.path
+
+      // -- re-read
+      let buf: Buffer
+      try {
+        buf = await readFile(targetPath)
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') throw notFound('文档在读取时被外部移除')
+        lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
+        continue
+      }
+
+      // -- 快照 + 复核（同追加纪律）
+      const snapshot = await statSafe(targetPath)
+      let current: StatSnapshot | null = null
+      try {
+        current = await statSafe(targetPath)
+      } catch (e) {
+        lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
+        continue
+      }
+      if (!sameStat(snapshot, current)) {
+        lastFailure = { kind: 'mismatch' }
+        continue
+      }
+
+      // -- 解析 + 归属校验（幽灵锚点按未找到处置，MUST NOT 修改）
+      const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
+      const text = bom ? buf.toString('utf8').slice(1) : buf.toString('utf8')
+      const parse = parseDocument(text)
+      const fm = parse.frontmatter === null ? {} : parseFrontmatterValues(parse.frontmatter.bodyLines)
+      const section = parse.sections.find((s) => s.kind === 'card' && s.anchor === input.anchor)
+      if (section === undefined) throw notFound('文档中不存在该卡片锚点')
+      const fmCode = typeof fm.code === 'string' ? fm.code : null
+      const fmTrade = typeof fm.tradeDate === 'string' ? fm.tradeDate : null
+      if (fmCode === null || fmTrade === null || fmCode !== section.code || toCompactDate(fmTrade) !== section.date) {
+        throw notFound(`锚点归属与文档 frontmatter 基准不一致（锚点 code=${section.code}, date=${section.date}；基准 code=${fmCode ?? '缺失'}, tradeDate=${fmTrade ?? '缺失'}）`)
+      }
+
+      // -- 变换（字节级：delete = 整节移除；update = 保留 H2+meta 行字节、替换其后的正文跨度）
+      let merged: string
+      if (input.mode === 'delete') {
+        merged = text.slice(0, section.startOffset) + text.slice(section.endOffset)
+      } else {
+        let lastMetaIdx = 0 // 至少保留标题行；meta 块 = 标题行后连续的 meta 行（写入器形状）
+        for (let i = 1; i < section.lines.length; i++) {
+          const lineText = section.lines[i].text
+          if (CARD_META_RE.test(lineText) || CARD_REQUEST_RE.test(lineText)) lastMetaIdx = i
+          else break
+        }
+        const bodyLines = (input.body ?? '').trim().replace(/\r\n/g, '\n').split('\n')
+        const bodyStart = section.lines[lastMetaIdx].eolStart + 1
+        const span = parse.eol + bodyLines.join(parse.eol) + parse.eol
+        merged = text.slice(0, bodyStart) + span + text.slice(section.endOffset)
+      }
+      const content = bom ? `\uFEFF${merged}` : merged
+
+      // -- 原子写
+      try {
+        await hooks.onPhase?.('before-write', targetPath, attempt)
+        await atomicWrite(targetPath, content)
+      } catch (e) {
+        if (isRetryableFsError(e)) {
+          lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
+          continue
+        }
+        throw e
+      }
+      return {
+        status: input.mode === 'update' ? ('updated' as const) : ('deleted' as const),
+        anchor: input.anchor,
+        path: targetPath,
+        warnings,
+      }
+    }
+
+    if (lastFailure?.kind === 'mismatch') {
+      throw new ConcurrentWriteError(
+        `CONCURRENT_WRITE: ${resolved.absPath} — 重试 ${MAX_RETRIES} 次后修改前校验仍检测到并发修改（mtimeMs/size 不一致）。`
+        + ' 未落盘、未覆盖任何内容；请确认 OneDrive/编辑器等外部占用结束后重试。',
+      )
+    }
+    throw new Error(
+      `STORE_WRITE_FAILED: ${resolved.absPath} — 重试 ${MAX_RETRIES} 次后仍失败（${lastFailure?.message ?? '未知原因'}）。未产生半截文档。`,
+    )
+  })
+}
+
+/** 修订卡片正文（owner 2026-10-05 追授）：锚点与 meta 行字节不变，仅替换正文。 */
+export async function updateCard(input: {
+  anchor: string
+  body: string
+  dataRoot: string
+}): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
+  if (typeof input.body !== 'string' || input.body.trim() === '') {
+    throw new Error('updateCard: 卡片正文为空——删除请用 deleteCard 通道（MUST NOT 以空正文冒充删除）')
+  }
+  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body })
+  return { status: 'updated' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
+}
+
+/** 删除卡片分节（owner 2026-10-05 追授）：该分节字节原样移除，其余内容保真。 */
+export async function deleteCard(input: {
+  anchor: string
+  dataRoot: string
+}): Promise<Result<{ status: 'deleted'; anchor: string; path: string }>> {
+  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'delete' })
+  return { status: 'deleted' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
 // ---------------------------------------------------------------------------

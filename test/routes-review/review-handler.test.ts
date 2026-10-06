@@ -20,7 +20,7 @@ import {
   type ReviewHandlerDeps,
 } from '../../src/routes/review.ts'
 import { REVIEW_PAGE_MARKER } from '../../src/client/review/index.html.ts'
-import { ConcurrentWriteError } from '../../src/review/store.ts'
+import { ConcurrentWriteError, AnchorNotFoundError } from '../../src/review/store.ts'
 import type { TraderKitHttpRequest, TraderKitHttpResponse } from '../../src/context-types.ts'
 import {
   jsonBody,
@@ -684,5 +684,94 @@ describe('handler 边界（tasks 2.8）', () => {
     const handler: ReviewHandlerDeps['requestRejection'] = deps.requestRejection
     expect(handler(makeReq({}))).toBe(401)
     expect(NOW_1432.getTime()).toBe(new Date('2026-09-24T06:32:05Z').getTime())
+  })
+})
+
+describe('POST /review/api/card/update + /delete（owner 2026-10-05 追授：修订/删除）', () => {
+  const API_UPDATE = REVIEW_PAGE_PATH + '/api/card/update'
+  const API_DELETE = REVIEW_PAGE_PATH + '/api/card/delete'
+  const ANCHOR = 'card-20260924-600000-1432'
+
+  it('写凭据门控：无凭据 → 401 且 store 出口零调用（update/delete 同款）', async () => {
+    const { deps, records } = makeDeps()
+    const handler = createReviewHandler(deps)
+    const r1 = await drive(handler, makeReq({ url: API_UPDATE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR, body: 'x' }) }))
+    expect(r1.status).toBe(401)
+    const r2 = await drive(handler, makeReq({ url: API_DELETE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR }) }))
+    expect(r2.status).toBe(401)
+    expect(records.updateCalls).toHaveLength(0)
+    expect(records.deleteCalls).toHaveLength(0)
+  })
+
+  it('update：凭据匹配 → 200 updated；锚点/正文透传 store；错误 key → 401', async () => {
+    const { deps, records } = makeDeps()
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_UPDATE, method: 'POST',
+      body: JSON.stringify({ anchor: ANCHOR, body: '新正文' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ status: string; anchor: string; warnings: string[] }>(rec)
+    expect(body.status).toBe('updated')
+    expect(body.anchor).toBe(ANCHOR)
+    expect(records.updateCalls).toEqual([{ anchor: ANCHOR, body: '新正文' }])
+    const bad = await drive(createReviewHandler(deps), makeReq({
+      url: API_UPDATE, method: 'POST',
+      body: JSON.stringify({ anchor: ANCHOR, body: 'x' }),
+      headers: { 'x-write-key': 'wrong' },
+    }))
+    expect(bad.status).toBe(401)
+  })
+
+  it('update 入参校验逐项 4xx：非法锚点 / 空正文 / 超限正文 / 非 JSON', async () => {
+    const { deps, records } = makeDeps()
+    const handler = createReviewHandler(deps)
+    const call = (raw: string): Promise<RecordedResponse> => drive(handler, makeReq({
+      url: API_UPDATE, method: 'POST', body: raw, headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect((await call(JSON.stringify({ anchor: 'bogus', body: 'x' }))).status).toBe(400)
+    expect((await call(JSON.stringify({ anchor: ANCHOR, body: '   ' }))).status).toBe(400)
+    expect((await call(JSON.stringify({ anchor: ANCHOR, body: 'x'.repeat(10001) }))).status).toBe(400)
+    expect((await call('not-json')).status).toBe(400)
+    expect(records.updateCalls).toHaveLength(0)
+  })
+
+  it('delete：凭据匹配 → 200 deleted；锚点不存在 → 404 ANCHOR_NOT_FOUND；非法锚点 → 400', async () => {
+    const { deps, records } = makeDeps()
+    const rec = await drive(createReviewHandler(deps), makeReq({
+      url: API_DELETE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ status: string; anchor: string }>(rec)
+    expect(body.status).toBe('deleted')
+    expect(records.deleteCalls).toEqual([ANCHOR])
+    const missing = makeDeps({ overrides: { deleteCard: async () => { throw new AnchorNotFoundError('ANCHOR_NOT_FOUND: 不存在') } } })
+    const rec2 = await drive(createReviewHandler(missing.deps), makeReq({
+      url: API_DELETE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(rec2.status).toBe(404)
+    expect(jsonBody<{ error: string }>(rec2).error).toBe('ANCHOR_NOT_FOUND')
+    const invalid = await drive(createReviewHandler(deps), makeReq({
+      url: API_DELETE, method: 'POST', body: JSON.stringify({ anchor: 'bogus' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(invalid.status).toBe(400)
+  })
+
+  it('出口未接线 → 501 NOT_IMPLEMENTED（显式，不静默成功）', async () => {
+    const { deps } = makeDeps({ overrides: { updateCard: undefined, deleteCard: undefined } })
+    const handler = createReviewHandler(deps)
+    const r1 = await drive(handler, makeReq({
+      url: API_UPDATE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR, body: 'x' }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(r1.status).toBe(501)
+    const r2 = await drive(handler, makeReq({
+      url: API_DELETE, method: 'POST', body: JSON.stringify({ anchor: ANCHOR }),
+      headers: { 'x-write-key': 'test-write-key' },
+    }))
+    expect(r2.status).toBe(501)
   })
 })

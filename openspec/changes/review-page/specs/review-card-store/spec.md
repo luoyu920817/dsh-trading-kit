@@ -173,6 +173,32 @@ frontmatter 的键语义 SHALL 按下表校验；**未知键 MUST 原样保留**
 - **WHEN** frontmatter 中 `patterns` / `drafts` 已有值（后续迭代回填）
 - **THEN** 本次写入保留其值，MUST NOT 重置为空数组
 
+### Requirement: 卡片显式修订与删除（owner 2026-10-05 追授）
+
+存储 SHALL 提供两张卡片的**显式用户动作**（owner 2026-10-05 裁决：页面卡片增加编辑/删除按钮）：`updateCard`（改文）与 `deleteCard`（整节删除）。两者均为**定向修改**，不改变「追加即新增」的写入语义，纪律与追加完全同款：
+
+- **锚点不可变**：编辑 MUST 保留原锚点 H2 行与其 meta 行（`writtenAt` / `clientRequestId`）逐字节不变，仅替换正文；Obsidian 块引用因此不失效。MUST NOT 生成新锚点、MUST NOT 移动分节位置。
+- **其余内容字节级保真**：编辑/删除 MUST NOT 触碰其它卡片分节、附注分节、frontmatter 与文件其余字节（删除 = 该分节字节原样移除，边界 = 分节 startOffset → endOffset）。
+- **归属校验**：锚点解析出的 (date, code) 必须与文档 frontmatter 基准一致（幽灵锚点 → 按未找到处置，MUST NOT 修改）。
+- **同款写入纪律**：进程内互斥、写前 re-read + stat 快照复核重试、原子写、EOL/BOM 保持——与「追加/插入语义与原子写」Requirement 逐条同款。
+- **显式失败**：锚点不存在 / 文档不存在 / 归属不一致 → 抛显式 `ANCHOR_NOT_FOUND`（含路径与原因），MUST NOT 静默成功、MUST NOT 新建文档；并发重试耗尽 → `CONCURRENT_WRITE` 同款。
+- **空正文拒绝**：编辑后的正文 MUST 非空白（删除即用删除通道，MUST NOT 以空正文冒充删除）。
+
+#### Scenario: 编辑只替换正文且锚点不变
+
+- **WHEN** 对锚点 `^card-20260930-000002-2110` 的卡片以新正文调用 `updateCard`
+- **THEN** 该分节的 H2 行、`writtenAt`/`clientRequestId` 行逐字节不变，正文替换为新文；文档内其它分节与 frontmatter 逐字节不变；Obsidian 中既有 `[[…#^card-20260930-000002-2110]]` 引用仍有效
+
+#### Scenario: 删除整节且其余保真
+
+- **WHEN** 对上述锚点调用 `deleteCard`
+- **THEN** 该分节从文档移除；其余卡片分节、附注与 frontmatter 逐字节不变（删除前后对比断言）
+
+#### Scenario: 锚点不存在显式失败
+
+- **WHEN** 以文档中不存在的锚点调用 `updateCard`/`deleteCard`（或锚点指向的文档不存在/归属不一致）
+- **THEN** 返回显式 `ANCHOR_NOT_FOUND`（含原因），零字节变化；MUST NOT 新建文档、MUST NOT 静默成功
+
 ### Requirement: 「既有内容不变」的精确口径（契约 §4）
 
 写入 SHALL 满足以下**精确**口径（替代含糊的「既有内容不变」）：
@@ -220,6 +246,17 @@ appendAinote(input: { loc: Loc; body: string; generatedAt: string; dataSources: 
 scanDailyCardTargets(tradeDate: string):
   Promise<Result<Array<{ code: string; name: string; path: string; cardCount: number; hasAinote: boolean }>>>
 ```
+
+**修订/删除扩展（owner 2026-10-05 追授，签名追加于五导出之外）**：
+
+```ts
+updateCard(input: { anchor: string; body: string; dataRoot: string }):   // anchor: '^card-' 去前缀形态
+  Promise<Result<{ status: 'updated'; anchor: string; path: string }>>
+deleteCard(input: { anchor: string; dataRoot: string }):
+  Promise<Result<{ status: 'deleted'; anchor: string; path: string }>>
+```
+
+锚点不存在/文档缺失/归属不一致 → 抛 `ANCHOR_NOT_FOUND`；其余纪律（互斥、re-read 复核、原子写、EOL/BOM、字节保真）与五导出同款（见「卡片显式修订与删除」Requirement）。
 
 **最小类型（与 `§3` 同源，change 5 复用）**：
 

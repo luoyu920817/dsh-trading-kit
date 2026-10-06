@@ -121,6 +121,16 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('复制引用')
     expect(REVIEW_HTML).toContain("'^' + anchor")
     expect(REVIEW_HTML).toContain('renderWarnings')
+    // owner 2026-10-05：锚点文本不展示 + 编辑/删除动作（删除两段确认、只读态隐藏）。
+    expect(REVIEW_HTML).toContain("meta.textContent = card.writtenAt || '';")
+    expect(REVIEW_HTML).not.toContain("meta.textContent = (card.writtenAt || '') +")
+    expect(REVIEW_HTML).toContain('makeDeleteButton')
+    expect(REVIEW_HTML).toContain('enterCardEdit')
+    expect(REVIEW_HTML).toContain('确认删除')
+    expect(REVIEW_HTML).toContain('card-action danger')
+    expect(REVIEW_HTML).toContain("postCardApi('/update'")
+    expect(REVIEW_HTML).toContain("postCardApi('/delete'")
+    expect(REVIEW_HTML).toContain('if (writable && card.anchor)') // 只读降级不渲染动作
   })
 
   it('交互态五态布点 + clientRequestId 幂等复用 + 联动保护 draftOwnerCode/pendingOwner', () => {
