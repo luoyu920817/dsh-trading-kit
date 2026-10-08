@@ -10,7 +10,7 @@
  *   MUST NOT 出现（结构断言项，见 test/review/structure.test.ts）。
  */
 
-export type StoreWarningKind = 'multiHit' | 'ghostAnchor' | 'duplicateAnchor' | 'nameTruncated'
+export type StoreWarningKind = 'multiHit' | 'ghostAnchor' | 'duplicateAnchor' | 'nameTruncated' | 'imageMissing' | 'imageCleanup'
 
 export interface StoreWarning {
   kind: StoreWarningKind

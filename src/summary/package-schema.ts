@@ -15,6 +15,8 @@
  * - `source`/`fetchedAt` 逐字段携带，无来源数值非法。
  */
 
+import type { CardImage } from '../review/images.ts'
+
 /** missing 原因枚举（spec「数据包 schema」逐字）。 */
 export const MISSING_REASONS = ['sourceUnavailable', 'dateMismatch', 'noRecord', 'fieldAbsent'] as const
 export type MissingReason = (typeof MISSING_REASONS)[number]
@@ -58,6 +60,7 @@ export interface PackageCard {
   anchor: string
   writtenAt: string
   body: string
+  images?: CardImage[]
 }
 
 /** 逐字段缺失登记。 */
@@ -91,7 +94,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 /** 东八偏移字面经字符类拼接构造（避免源码出现第二份偏移字面——review-page 1.13 唯一拼装）。 */
 const OFFSET8 = '+' + String.fromCharCode(48 + 0) + '8:00'
 /** generatedAt 形态：ISO8601 东八偏移（时间格式唯一实现 src/review/format.ts 产出的形状）。 */
-const GENERATED_AT_RE = new RegExp('^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:' + OFFSET8 + '|Z)$')
+const GENERATED_AT_RE = new RegExp(String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:` + '\\' + OFFSET8 + '|Z)$')
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -130,7 +133,14 @@ function requireSourcedValue(obj: Record<string, unknown>, key: string, path: st
   if (v.fetchedAt !== null && typeof v.fetchedAt !== 'string') fail(`${path}${key}.fetchedAt`, 'string | null', v.fetchedAt)
 }
 
-/** 校验数据包；不通过抛 PackageSchemaError（点名非法字段），通过返回原引用。 */
+/**
+ * 校验逐标的汇总数据包。
+ * 业务逻辑: 检查卡片、可选图片元数据、行情信封与缺失登记。
+ * 关键判断: 旧包不要求 images；存在时必须为四字段数组，缺图可保留空路径与 MIME。
+ * 异常处理: 非法字段抛 PackageSchemaError 并点名字段路径，不丢弃数据。
+ * 参数: input 为 agent 组装的未知数据包。
+ * 返回: 校验通过的原数据包引用。
+ */
 export function validateDataPackage(input: unknown): DailyDataPackage {
   if (!isPlainObject(input)) fail('（根）', 'object 数据包', input)
   const pkg = input
@@ -153,6 +163,21 @@ export function validateDataPackage(input: unknown): DailyDataPackage {
     requireString(card, 'anchor', `cards[${i}].`)
     requireString(card, 'writtenAt', `cards[${i}].`)
     requireString(card, 'body', `cards[${i}].`)
+    if ('images' in card) {
+      if (!Array.isArray(card.images)) fail(`cards[${i}].images`, 'array', card.images)
+      for (let j = 0; j < card.images.length; j++) {
+        const image = card.images[j]
+        const imagePath = `cards[${i}].images[${j}].`
+        if (!isPlainObject(image)) fail(`cards[${i}].images[${j}]`, 'object 图片元数据', image)
+        if (typeof image.available !== 'boolean') fail(`${imagePath}available`, 'boolean', image.available)
+        requireString(image, 'relativePath', imagePath)
+        requireString(image, 'path', imagePath, { allowEmpty: image.available === false })
+        const mimeType = requireString(image, 'mimeType', imagePath, { allowEmpty: image.available === false })
+        if (!(image.available === false && mimeType === '') && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mimeType)) {
+          fail(`${imagePath}mimeType`, 'image/png | image/jpeg | image/webp | image/gif（缺图可空）', mimeType)
+        }
+      }
+    }
   }
 
   // -- quote ----------------------------------------------------------------

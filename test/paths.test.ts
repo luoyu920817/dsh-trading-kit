@@ -24,13 +24,18 @@ afterEach(() => {
 })
 
 describe('业务区表穷举', () => {
-  it('6 个业务区 key 的目录解析结果与映射表一致', () => {
+  it('8 个业务区 key 的目录解析结果与映射表一致', () => {
     expect(Object.keys(AREA_TABLE).sort()).toEqual(
-      ['agentSkills', 'cache', 'macro', 'patterns', 'review', 'whiteboard'].sort(),
+      ['agentSkills', 'brief', 'cache', 'macro', 'patterns', 'review', 'stock', 'whiteboard'].sort(),
     )
     // 复盘卡片：date 折算月目录段。
     const review = resolveArea(root, 'review', { code: '600000', name: '浦发银行', date: '20260924' })
     expect(review.relPath.replaceAll('\\', '/')).toBe('DB/review/202609/600000_浦发银行_20260924.md')
+    // 当日盘面整理（review-loop）：与卡片区共月目录、文件名模板 <date>-summary.md。
+    const brief = resolveArea(root, 'brief', { date: '20260924' })
+    expect(brief.relPath.replaceAll('\\', '/')).toBe('DB/review/202609/20260924-summary.md')
+    // 标的档案（review-loop）：既有 DB/stock，无文件名模板（消费层按名称直配）。
+    expect(resolveArea(root, 'stock').relPath.replaceAll('\\', '/')).toBe('DB/stock')
     // 缓存区：按 requestedDate 折算天级目录。
     const cache = resolveArea(root, 'cache', { date: '20260924' })
     expect(cache.relPath.replaceAll('\\', '/')).toBe('agent/DB/temp/dsh-trader-kit/20260924')

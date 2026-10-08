@@ -75,6 +75,8 @@ export interface ResolvedTraderKitConfig {
     s7: { sign: string; ts: string; timeoutMs: number; retries: number }
     s5: { timeoutMs: number; retries: number }
     s8: { timeoutMs: number; retries: number }
+    /** review-loop（owner 裁决 2026-10-06）：TQ-Local 只读兜底开关（默认 true；关闭 = 零请求）。 */
+    tqLocal: { enabled: boolean }
   }
   guard: {
     maxConcurrency: number
@@ -102,6 +104,7 @@ export type TraderKitConfig = {
     s7?: { sign?: string; ts?: string; timeoutMs?: number; retries?: number }
     s5?: { timeoutMs?: number; retries?: number }
     s8?: { timeoutMs?: number; retries?: number }
+    tqLocal?: { enabled?: boolean }
   }
   guard?: {
     maxConcurrency?: number
@@ -143,6 +146,11 @@ export const Config: z<TraderKitConfig> = z.object({
     s8: z.object({
       timeoutMs: z.number().min(1000).default(SOURCE_HTTP_DEFAULTS.timeoutMs),
       retries: z.number().min(0).max(2).default(SOURCE_HTTP_DEFAULTS.retries),
+    }),
+    // review-loop（owner 裁决 2026-10-06）：TQ-Local 只读兜底（get_stock_info 白名单）。
+    // 默认开——纯只读本机信息、不涉交易；关闭后名称/基础信息回落「名称未获取」。
+    tqLocal: z.object({
+      enabled: z.boolean().default(true),
     }),
   }),
   guard: z.object({

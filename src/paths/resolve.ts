@@ -12,7 +12,7 @@ import { AREA_KEYS, AREA_TABLE, type AreaKey } from './mapping.ts'
 import { sanitizeNameSegment } from './sanitize.ts'
 
 /** 模板参数白名单（`data-root-layout` Requirement 表格逐字落地）。 */
-const CODE_RE = /^\d{6}$/
+const CODE_RE = /^(?:sh|sz|bj)?\d{6}$/ // owner 2026-10-06：可选市场前缀（指数/锚点族与同码股票的文件区分）
 const COMPACT_DATE_RE = /^\d{8}$/
 
 export class PathResolveError extends Error {}
@@ -102,7 +102,7 @@ export function resolveArea(
     if (params[required] === undefined) fail(`业务区 '${key}' 缺少必需参数 '${required}'`)
   }
   if (params.code !== undefined && !CODE_RE.test(params.code)) {
-    fail(`非法参数 code='${params.code}'——白名单 ^\\d{6}$（6 位数字，保留前导零，不补全不猜测）`)
+    fail(`非法参数 code='${params.code}'——白名单 ^(?:sh|sz|bj)?\d{6}$（可选市场前缀 + 6 位数字，保留前导零，不补全不猜测）`)
   }
   if (params.date !== undefined) {
     if (!COMPACT_DATE_RE.test(params.date)) {

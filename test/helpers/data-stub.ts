@@ -22,6 +22,8 @@ export interface StubResponse {
   status?: number
   json?: unknown
   text?: string
+  /** 原始字节响应（GBK 等非 utf8 编码测试用）。 */
+  raw?: Buffer
   delayMs?: number
 }
 
@@ -54,6 +56,11 @@ export async function startDataStub(): Promise<DataStubServer> {
       requests.push(stubReq)
       const out = responder(stubReq) ?? { status: 404, text: 'stub: unmatched' }
       const write = (): void => {
+        if (out.raw !== undefined) {
+          res.writeHead(out.status ?? 200, { 'Content-Type': 'application/octet-stream' })
+          res.end(out.raw)
+          return
+        }
         const bodyText = out.json !== undefined ? JSON.stringify(out.json) : (out.text ?? '')
         res.writeHead(out.status ?? 200, { 'Content-Type': out.json !== undefined ? 'application/json' : 'text/plain' })
         res.end(bodyText)
@@ -85,6 +92,7 @@ export const OFFICIAL_BASES: readonly string[] = [
   'https://vis.10jqka.com.cn', // S5 涨停明细
   'https://flash-api.xuangubao.com.cn', // S8 概念
   'https://d.10jqka.com.cn', // S9 行情快照（realhead JSONP）
+  'https://qt.gtimg.cn', // S10 指数行情（腾讯）
 ]
 
 /** 重定向传输：官方 URL → 本地桩（真实 fetch 出站到真实本地 http 服务，零 mock）。 */
@@ -102,6 +110,22 @@ export function stubTransport(stub: DataStubServer): DataTransport {
     }
     return fetch(target, init)
   }
+}
+
+/**
+ * TQ-Local 端点重定向传输（review-loop）：把固定端点 URL 映射到本地桩
+ * （记录原始 URL 供「只发白名单端点」断言；真实 fetch 出站到真实本地 http 服务）。
+ */
+export function tqLocalRedirectTransport(
+  stub: DataStubServer,
+  seen: string[] = [],
+): DataTransport & { seen: string[] } {
+  const transport = ((url: string, init?: RequestInit) => {
+    seen.push(url)
+    return fetch(stub.base + '/', init)
+  }) as DataTransport & { seen: string[] }
+  transport.seen = seen
+  return transport
 }
 
 /** 真实临时 dataRoot（缓存落盘用；测试结束清理）。 */

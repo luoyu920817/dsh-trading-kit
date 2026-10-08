@@ -2,7 +2,7 @@
 
 ### Requirement: 存储路径与文件粒度
 
-卡片 SHALL 落于 `<数据根>/DB/review/<YYYYMM>/<代码>_<名称>_<YYYYMMDD>.md`（数据根解析与目录自动创建遵循 change 2 的 `data-root-layout`；文件名模板由该映射表的 `resolveArea` 持有，调用方 MUST NOT 自行拼接，见 `iteration-1-contracts §6`）。**一个标的 × 一个交易日 SHALL 对应一个 md 文档**；同标的同日的多张卡片 MUST 共处同一文档，MUST NOT 每卡一个文件。文档定位 SHALL 以「代码 + 日期」为准（扫描当日目录匹配 `<代码>_*_<YYYYMMDD>.md`）：已存在文档时 MUST 复用，MUST NOT 因名称变化（更名/ST 等）新建第二个文档；多命中时 SHALL 按「多命中文档的确定性选择」Requirement 处理。
+卡片 SHALL 落于 `<数据根>/DB/review/<YYYYMM>/<代码>_<名称>_<YYYYMMDD>.md`（数据根解析与目录自动创建遵循 change 2 的 `data-root-layout`；文件名模板由该映射表的 `resolveArea` 持有，调用方 MUST NOT 自行拼接，见 `iteration-1-contracts §6`）。**一个标的 × 一个交易日 SHALL 对应一个 md 文档**；同标的同日的多张卡片 MUST 共处同一文档，MUST NOT 每卡一个文件。文档定位 SHALL 以「代码 + 日期」为准（扫描当日目录匹配 `<代码>_*_<YYYYMMDD>.md` 与带市场前缀的 `<sh|sz|bj><代码>_*_<YYYYMMDD>.md` 两种形态）。**代码标识（owner 2026-10-06 追授「整体添加代码标识添加一个沪深」）**：显式市场（URL 前缀 `#!!xxxxxx` 的替换结果 / 写卡 `payload.market`）时文件名代码段 SHALL 带 `sh|sz|bj` 前缀（指数/锚点族与同码股票由前缀天然区分，如 `sh000001_上证指数_*` vs `000001_平安银行_*`）；缺省保持 6 位（既有文档零迁移）。路径白名单 `resolveArea` 的 code 参数 SHALL 接受可选前缀形态。：已存在文档时 MUST 复用，MUST NOT 因名称变化（更名/ST 等）新建第二个文档；多命中时 SHALL 按「多命中文档的确定性选择」Requirement 处理。
 
 #### Scenario: 首次落卡片
 
@@ -335,11 +335,16 @@ formatAnchorTime(date: Date): string  // 'HHmm'（锚点时间段；分节标题
 
 ### Requirement: 多命中文档的确定性选择
 
-同一 `(code, tradeDate)` 命中多份文档时，选择 SHALL 确定：**取 `mtime` 最新；平局按文件名字典序（code unit 序）**。选择结果与其它候选 SHALL 通过 `warnings: string[]` 返回（含被选路径与其它候选路径），MUST NOT 静默任选、MUST NOT 自动合并或删除候选文档。
+同一 `(code, tradeDate)` 命中多份文档时，选择 SHALL 确定、按序判定：**① 名称段精确匹配优先**（`loc.name` 经净化后的名称段与候选文件名的 `<名称>` 段相等——owner 2026-10-06 裁决：指数（如 000001 上证指数）与同码深市股票（如 000001 平安银行）是**不同标的、各自共存的文档**，指数为「指数/情绪/赚钱效应」关键判断的载体必须可写卡）；② 名称未命中（含 `loc.name` 缺省/名称变化）时取 `mtime` 最新（保持更名/ST 复用既有文档的既有语义）；③ 平局按文件名字典序（code unit 序）。**名称段精确命中且唯一时视为名称即身份，MUST NOT 告警**；其余多命中 SHALL 通过 `warnings: string[]` 返回（含被选路径与其它候选路径），MUST NOT 静默任选、MUST NOT 自动合并或删除候选文档。
 
-#### Scenario: mtime 最新优先
+#### Scenario: 名称段精确匹配优先（同码跨市场共存）
 
-- **WHEN** 命中两份文档，其中一份 mtime 更新
+- **WHEN** 当日目录同时存在 `000001_上证指数_20260930.md` 与 `000001_平安银行_20260930.md`，写入方 `loc.name='上证指数'`
+- **THEN** 写入 `000001_上证指数_20260930.md`（名称即身份——不告警）；`000001_平安银行_20260930.md` 字节不变；反向（`loc.name='平安银行'`）同理
+
+#### Scenario: mtime 最新优先（名称未命中时）
+
+- **WHEN** 命中两份文档、无一与 `loc.name` 名称段匹配（或 `loc.name` 缺省），其中一份 mtime 更新
 - **THEN** 写入 mtime 最新的文档；`warnings` 含两条路径
 
 #### Scenario: mtime 平局

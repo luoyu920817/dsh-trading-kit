@@ -23,7 +23,7 @@ function withLoopDeps(deps: ReturnType<typeof makeDeps>['deps']): ReturnType<typ
 async function get(deps: ReturnType<typeof makeDeps>['deps'], url: string, method = 'GET'): Promise<RecordedResponse> {
   const handler = createReviewHandler(deps)
   const { res, rec } = makeRes()
-  await handler(makeReq({ url, method }), res)
+  await handler(makeReq({ url, method, headers: { cookie: 'dsh-auth=ok' } }), res)
   return rec
 }
 

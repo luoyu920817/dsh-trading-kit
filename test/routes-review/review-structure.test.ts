@@ -57,6 +57,7 @@ describe('6.3② 全 src 与 test/** 零出站调用点（fet' + 'ch( / http' + 
       if (norm === 'src/data/http.ts') return false // 具名出站通道 1（change 2）
       if (norm === 'src/skill/download.ts') return false // 具名出站通道 2（change 3）
       if (norm === 'src/client/review/index.html.ts') return false // 页面同源 /review/api/* 调用（浏览器上下文，非插件出站通道；第三方 URL 禁令由 6.3③ 承担）
+      if (norm === 'src/client/panel/Panel.ts') return false // review-loop 面板同源 /review/api/day 调用（同为浏览器上下文；同源与零外链由 review-loop-panel 断言承担）
       const text = readFileSync(f, 'utf8')
       return text.includes(FETCH_MARKER) || text.includes(HTTP_REQUEST_MARKER)
     })

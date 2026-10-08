@@ -11,7 +11,7 @@
 
 - 单标的轻量 GET（`https://qt.gtimg.cn/q=sh<code>`），出站走 `src/data/http.ts` 唯一传输实现，经 guard 计数（batch=1）；
 - 响应为 GBK 编码 `v_sh<code>="~"` 分隔字段串：解析 `name`（字段 1）、现价（字段 3）、涨跌幅 %（字段 32）；解码用 `TextDecoder('gbk')`（失败回退 utf-8，沿参考页 fetchTencentQuote 策略）；数值非有限 → `null`（MUST NOT 用 0 冒充）；
-- **代码语义**（页面仅在「显式沪市指数态」调用，见 review-page 传参需求）：`999999`（TDX 上证指数显示码）SHALL 别名映射为 `000001` 后出站；`88xxxx`（通达信自制指标，无任何外部行情源）SHALL **显式不可得且零出站**（`errors=['noExternalSource']`）；其余 6 位代码按沪市出站；
+- **代码语义**（页面仅在「显式沪市指数态」调用，见 review-page 传参需求）：`999999`（TDX 上证指数显示码）SHALL 别名映射为 `000001` 后出站；`88xxxx`（通达信自制指标，无任何外部行情源）SHALL **显式不可得且零出站**（`errors=['noExternalSource']`；2026-10-06 实测本地 `vipdoc/**/lday/*.day` 全部停更于 2026-06-17（固定 1180 根过时缓存）不采用——行情提示在通达信内查看）；其余 6 位代码按沪市出站；
 - 空响应 / 字段缺失 → `available=false` + `errors=['notFound']`；护栏拒绝 → `['rateLimited']`；传输失败 → `['indexQuote: <原因>']`；
 - 实时语义：不进缓存（每次调用一次出站；节流由 guard 统一保证）。
 
@@ -27,8 +27,13 @@
 
 #### Scenario: 通达信自制指标显式不可得
 
-- **WHEN** 以 `880823` 调用（自制指标，外部无源）
-- **THEN** `available=false` + `errors=['noExternalSource']`，**零出站**（不出站到腾讯）
+- **WHEN** 以 `880823` 调用（自制指标，外部无源；本地 day 缓存实测停更不采用）
+- **THEN** `available=false` + `errors=['noExternalSource']` + detail 含「行情请在通达信内查看」，**零出站**（不出站到腾讯）
+
+#### Scenario: 指数态交易日随行
+
+- **WHEN** 调用本源（任意代码）
+- **THEN** 响应 SHALL 携带 `tradeDate`（与股票页同一 T0 事实源 `resolveTradeDate({})`；内存缓存复用，零额外出站）——页面指数态据此回填交易日（owner 2026-10-06 反馈「交易日定位失效」）
 
 #### Scenario: 空响应与护栏拒绝
 

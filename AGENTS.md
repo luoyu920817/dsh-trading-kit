@@ -28,7 +28,7 @@
 | └ 规则源 | `dsh-trading\AGENTS.md` | 安全红线与纪律的参照基线 |
 | 插件范式参照 | `E:\work\code\open\dsh-plugins\DSH-better-sidebar` | 单包插件 + dsh.plugin.json + cordis.patch.yml 双通道先例、跨插件服务先例 |
 | 同类先例 | `E:\work\code\open\dsh-plugins\dsh-market` | 发布流与 preflight 先例（个人工程暂不需要） |
-| vault（资产层） | `C:\Users\luoyu\OneDrive\应用\remotely-save\finance` | 阶段 4 起读写，沿 vault-integration 写分区契约（只写既定产物区；本迭代白名单 = `DB/review/` 与 `agent/DB/temp/dsh-trader-kit/`） |
+| vault（资产层） | `C:\Users\luoyu\OneDrive\应用\remotely-save\finance` | 阶段 4 起读写，沿 vault-integration 写分区契约（只写既定产物区；本迭代白名单 = `DB/review/`、`agent/DB/temp/dsh-trader-kit/`、`DB/stock/`（review-loop 起：**只建不改**，仅首卡懒创建骨架）与 `agent/skills/`） |
 
 ## 工程契约
 
@@ -48,9 +48,16 @@
   判断 → 自建。
 - **宿主 cohort**：`dsh.plugin.json` 的 engines.dsh 是下限占位；宿主与 SDK
   版本以当前实际安装核验，不硬编码旧版本（沿 dsh-trading 契约）。
-- **vault 写入**：除本迭代两条白名单路径外（`DB/review/` 复盘卡片产物区；
-  `agent/DB/temp/dsh-trader-kit/` 数据工具缓存与运行摘要区），阶段 4 起才触
-  vault；写入沿 vault-integration 的写分区与原子写契约，人工判断字段不代改。
+- **vault 写入**：除本迭代四条白名单路径外（`DB/review/` 复盘卡片与当日盘面
+  md 产物区；`agent/DB/temp/dsh-trader-kit/` 数据工具缓存与运行摘要区；
+  `agent/skills/` 自产业务 skill 部署区；`DB/stock/` 标的档案区——**review-loop
+  起新增，性质 = 只建不改**：仅首次写该标的复盘卡片时 create-only 创建骨架，
+  MUST NOT 修改/删除/重命名既有档案），阶段 4 起才触 vault；写入沿
+  vault-integration 的写分区与原子写契约，人工判断字段不代改。
+- **TQ-Local 边界（review-loop，owner 裁决 2026-10-06）**：数据面默认**绝不**向
+  `127.0.0.1:17709` 发数据请求；唯一例外 = `get_stock_info` 只读白名单
+  （method/字段/目标/请求体四重复核在 `src/data/http.ts` 闸内），仅用于通达信
+  内置代码的名称与最小基础信息兜底；MUST NOT 调用任何行情/交易接口。
 
 ## 按需阅读
 

@@ -122,7 +122,12 @@ describe('③ 17709 无 HTTP 请求、仅 net.connect', () => {
         expect(text).toContain('node:net')
         expect(text).toMatch(/net\.Socket|net\.connect/)
       }
-      expect(text).not.toMatch(/https?:\/\/[^'"]*17709/) // 无 HTTP URL 指向 17709
+      if (isHttpGate) {
+        // review-loop 白名单例外：闸文件持有唯一端点常量（唯一放行点；其余文件零 17709 URL）。
+        expect(text).toContain('TQ_LOCAL_ENDPOINT')
+      } else {
+        expect(text).not.toMatch(/https?:\/\/[^'"]*17709/) // 无 HTTP URL 指向 17709
+      }
     }
   })
 })
@@ -146,9 +151,9 @@ describe('⑥ T0/T1/T2 入参 schema 无 refresh（属性扫描，keys 非空）
     registerData(ctx as never, config, {
       health: { start: () => {}, whenReady: async () => {}, dataStatus: () => ({ probedAt: null, totalTimeoutMs: 3000, targets: {}, warnings: [] }) },
     })
-    expect(registeredTools.length).toBe(3)
+    expect(registeredTools.length).toBe(4)
     const names = registeredTools.map((t) => t.name)
-    expect(names).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
+    expect(names).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts', 'get_stock_basics'])
     for (const tool of registeredTools) {
       // defineTool 编译后的 parameters 为 JSON Schema 对象根：属性键在 .properties 下。
       const params = (tool as unknown as { parameters: { properties: Record<string, unknown> } }).parameters
@@ -169,11 +174,11 @@ describe('⑥ T0/T1/T2 入参 schema 无 refresh（属性扫描，keys 非空）
 })
 
 describe('装配面结构（挂载后可观察，支撑 7.2）', () => {
-  it('apply 挂载（probe 关闭）注册 8 工具 + 提供 traderKit data 四出口 + health 两段视图', async () => {
+  it('apply 挂载（probe 关闭）注册 11 工具 + 提供 traderKit data 五出口 + health 两段视图', async () => {
     const { ctx, registeredTools, provided } = createFakeContext(false)
     expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    // 波 4 起：数据面 3 + tq_skill_manage + 每日汇总 4 = 8（清单见 test/smoke.test.ts）。
-    expect(registeredTools.length).toBe(8)
+    // review-loop 起：数据面 4 + tq_skill_manage + 每日汇总 4 + review-loop 2 = 11（清单见 test/smoke.test.ts）。
+    expect(registeredTools.length).toBe(11)
     expect(registeredTools.slice(0, 3).map((t) => t.name)).toEqual(['get_trade_date', 'get_limit_reason', 'get_concepts'])
     const api = provided['traderKit'] as {
       data: Record<string, unknown>

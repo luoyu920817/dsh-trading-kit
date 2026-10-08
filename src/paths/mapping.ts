@@ -7,7 +7,7 @@
  * 各自定义第二份文件名模板。调用方 MUST NOT 自行拼接业务区路径。
  */
 
-export type AreaKey = 'review' | 'cache' | 'agentSkills' | 'macro' | 'whiteboard' | 'patterns'
+export type AreaKey = 'review' | 'cache' | 'agentSkills' | 'stock' | 'brief' | 'macro' | 'whiteboard' | 'patterns'
 
 /** 模板参数名（白名单见 resolve.ts）。 */
 export type AreaParam = 'code' | 'name' | 'date'
@@ -43,6 +43,19 @@ export const AREA_TABLE: Record<AreaKey, AreaDefinition> = {
     dir: 'agent/skills',
     status: 'active',
     note: '自产业务 skill（既有区；部署方 change 3/5）',
+  },
+  stock: {
+    dir: 'DB/stock',
+    // 文件名 = owner 命名的标的名称（<名称>.md），无文件名模板；消费层按 code→name 直配。
+    status: 'active',
+    note: '标的档案（既有区；owner 维护内容 + 插件只建不改——首卡懒创建骨架，review-loop）',
+  },
+  brief: {
+    dir: 'DB/review/<YYYYMM>',
+    template: '<date>-summary.md',
+    params: ['date'],
+    status: 'active',
+    note: '当日盘面整理（review-loop 新增产物；与 review 卡片区共目录、文件名不冲突）',
   },
   macro: {
     dir: '题材调研/00宏观',

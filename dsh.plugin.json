@@ -10,7 +10,8 @@
     "tools": [
       "get_trade_date",
       "get_limit_reason",
-      "get_concepts"
+      "get_concepts",
+      "get_stock_basics"
     ],
     "skills": []
   }

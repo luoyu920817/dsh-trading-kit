@@ -12,6 +12,7 @@
  * | POST | …/review/api/card/update     | exact     | 卡片修订（owner 2026-10-05 追授；凭据同写卡；锚点不变仅改正文） |
  * | POST | …/review/api/card/delete     | exact     | 卡片删除（owner 2026-10-05 追授；凭据同写卡；整节移除） |
  * | POST | …/review/api/organize        | exact     | 整理意图登记（owner 2026-10-06 追授；凭据同写卡；返回固定指令供会话发送——MUST NOT 由插件自建 agent 运行） |
+ * | GET  | …/review/api/index-quote     | exact     | 指数态行情（owner 2026-10-06 追授；S10 腾讯指数源，读通道） |
  * | GET  | …/review/api/dates            | exact     | 该标的有卡日期（月桶扫描，B2 提示用） |
  * | GET  | …/review（prefix）            | prefix    | 直链 /review/<code> + /review/assets/<name> 的兜底匹配 |
  * MUST NOT 注册 GET /review/api/context（已废止——本地段与网络段 MUST 为独立请求）。
@@ -58,9 +59,12 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { formatZonedIso } from '../review/format.ts'
 import { appendCard, ConcurrentWriteError, deleteCard, DocMismatchError, locateDoc, parseDoc, AnchorNotFoundError, updateCard, type Card, type Loc } from '../review/store.ts'
 import { createStockProfileIfMissing, type EnsureProfileResult } from '../review/profile-create.ts'
+import { readStockProfiles } from '../review/profile.ts'
 import { readBriefMeta, type BriefMeta } from '../summary/brief.ts'
 import { readRunReport, runReportPath, type RunReport } from '../summary/run-report.ts'
 import { resolveArea } from '../paths/resolve.ts'
+import { readCardImages, readImageFile, ReviewImageError, validateImageUploads, type CardImage, type ImageUpload } from '../review/images.ts'
+import { deleteCardImage } from '../review/store.ts'
 
 /** basePath（沿探针先例内联单一事实源；Config 接管归 change 2）。 */
 export const REVIEW_BASE_PATH = '/dsh-trader-kit'
@@ -69,7 +73,8 @@ export const REVIEW_PAGE_PATH = REVIEW_BASE_PATH + '/review'
 
 /**
  * 整理指令固定模板（owner 2026-10-06 追授「整理」按钮；服务端单一事实源，页面零拼接——
- * spec「B3 工具框整理动作」）。agent 的实际执行由用户在 DSH 会话发送该指令触发；
+ * spec「交易日行整理动作」，按钮 owner 2026-10-07 自 B3 工具框移到交易日右侧）。agent 的实际执行
+ * 由用户在 DSH 会话发送该指令触发；
  * 插件不自建 agent 运行路径（review-loop 草案纪律）。
  */
 export function buildOrganizePrompt(code: string, date: string): string {
@@ -175,15 +180,19 @@ export interface ReviewHandlerDeps {
   // ② 存储导出（locateDoc/parseDoc/appendCard；appendAinote/scanDailyCardTargets 无路由消费方——change 5 工具线专用）
   locateDoc(loc: Loc): Promise<{ path: string; warnings: string[] }>
   parseDoc(path: string): Promise<{ frontmatter: Record<string, unknown>; cards: Card[]; warnings: string[] }>
-  appendCard(input: { loc: Loc; body: string; now?: Date; clientRequestId?: string }): Promise<{
+  appendCard(input: { loc: Loc; body: string; now?: Date; clientRequestId?: string; images?: ImageUpload[] }): Promise<{
     status: 'created' | 'duplicate'
     anchor: string
     path: string
     warnings: string[]
   }>
   /** 卡片修订/删除（owner 2026-10-05 追授；未注入 → 对应接口显式 501）。 */
-  updateCard?(input: { anchor: string; body: string; dataRoot: string }): Promise<{ status: 'updated'; anchor: string; path: string; warnings: string[] }>
+  updateCard?(input: { anchor: string; body: string; dataRoot: string; images?: ImageUpload[] }): Promise<{ status: 'updated'; anchor: string; path: string; warnings: string[] }>
   deleteCard?(input: { anchor: string; dataRoot: string }): Promise<{ status: 'deleted'; anchor: string; path: string; warnings: string[] }>
+  /** 图片删除与文档修订复用同一存储锁；未注入时显式返回 501。 */
+  deleteCardImage?: typeof deleteCardImage
+  /** 指数行情（S10 腾讯源；指数态专用——owner 2026-10-06 追授。未注入 → 501 显式）。 */
+  getIndexQuote?(code: string): Promise<{ available: boolean; name: string | null; price: number | null; pct: number | null; source: string | null; errors: string[]; detail: string | null; fetchedAt: string | null }>
   // ③ 取数（change 2 service 出口）
   resolveTradeDate: TradeDateResolver['resolve']
   getLimitReason: LimitDayFetcher
@@ -350,7 +359,7 @@ async function scanCardedDates(dataRoot: string, code: string): Promise<string[]
     if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
     throw e
   }
-  const re = new RegExp(`^${code}_.+_(\\d{8})\\.md$`)
+  const re = new RegExp(`^(?:sh|sz|bj)?${code}_.+_(\\d{8})\\.md$`)
   const found = new Set<string>()
   for (const month of months) {
     if (!month.isDirectory()) continue
@@ -394,13 +403,26 @@ const BODY_LIMIT = 10_000
 const NAME_LIMIT = 200
 const CLIENT_REQUEST_ID_LIMIT = 200
 const CANONICAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const REQUEST_BODY_LIMIT = 30 * 1024 * 1024
 
+/**
+ * 有界读取卡片 JSON（包含可选图片 Base64）。
+ * 业务逻辑: 逐块累计字节数，在解析 JSON 前限制请求体内存占用。
+ * 关键判断: 30 MiB 请求上限容纳 20 MiB 图片的 Base64 与正文。
+ * 异常处理: 超限返回可识别的 413，读取错误交由路由兜底。
+ * 参数: req 为请求的异步字节流。
+ * 返回: UTF-8 请求正文。
+ */
 async function readBody(req: TraderKitHttpRequest): Promise<string> {
-  let out = ''
+  const chunks: Buffer[] = []
+  let bytes = 0
   for await (const chunk of req) {
-    out += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
+    const buffer = Buffer.from(chunk)
+    bytes += buffer.length
+    if (bytes > REQUEST_BODY_LIMIT) throw new ReviewImageError('REQUEST_TOO_LARGE', '请求体超限（上限 30 MiB）', 413)
+    chunks.push(buffer)
   }
-  return out
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 function describeCause(e: unknown): string {
@@ -451,6 +473,46 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     }
   }
 
+  /**
+   * 锚点领域档缓存（owner 2026-10-06 反馈「切换响应速度慢」）：readStockProfiles
+   * 每次全量扫描 DB/stock（766+ 份档案，OneDrive 逐文件读）——按 TTL 缓存锚点清单，
+   * 过期后**后台刷新、先用旧值**（stale-while-revalidate）；档案编辑最迟 TTL+一次
+   * 切换后可见。装配期预热一次（fire-and-forget），消除首切卡顿。
+   */
+  interface AnchorCacheEntry { code: string | null; name: string; role: string | null; isAnchor: boolean; path: string }
+
+  // 档案查询缓存（owner 2026-10-06）：code → 条目（null = 未命中，也缓存以免重复扫描）。
+  // 板块指数/锚点/指数族分散在 800+ 份 DB/stock 档案中，逐码懒查询 + TTL 缓存；
+  // OneDrive 预热后单次扫描约 0.1–0.3s，每码首访一次、TTL 内秒回。
+  const PROFILE_CACHE_TTL_MS = 120_000
+  const profileCache = new Map<string, { at: number; entry: AnchorCacheEntry | null }>()
+
+  async function lookupAnchorEntry(code: string): Promise<AnchorCacheEntry | undefined> {
+    const cached = profileCache.get(code)
+    if (cached !== undefined && Date.now() - cached.at <= PROFILE_CACHE_TTL_MS) {
+      return cached.entry ?? undefined
+    }
+    try {
+      const prof = await readStockProfiles(deps.dataRoot, { codes: [code] })
+      const hit = prof.entries[0]
+      const entry: AnchorCacheEntry | null = hit !== undefined
+        ? { code: hit.code, name: hit.name, role: hit.role, isAnchor: hit.isAnchor, path: hit.path }
+        : null
+      profileCache.set(code, { at: Date.now(), entry })
+      return entry ?? undefined
+    } catch {
+      return undefined // 读取失败不缓存（下次重试）
+    }
+  }
+
+  /**
+   * 读取当前标的的本地卡片与图片元数据。
+   * 业务逻辑: 定位文档、解析用户卡片，再补充同目录图片的路径和可用状态。
+   * 关键判断: 无图片保持旧卡片形状；缺图不阻断文字与历史日期展示。
+   * 异常处理: 非法代码或日期前置拒绝，图片不可读记录告警。
+   * 参数: res 为响应，query 为标的与可选日期。
+   * 返回: 写入本地卡片 JSON。
+   */
   async function handleLocal(res: TraderKitHttpResponse, query: Record<string, string>): Promise<void> {
     const codeRaw = query.code ?? ''
     const code = normalizeCode(codeRaw)
@@ -496,7 +558,26 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     const warnings: string[] = []
     let locatedPath: string | null = null
     let exists = false
-    let cards: Card[] = []
+    let cards: Array<Card & { images?: CardImage[] }> = []
+    // 锚点领域档（owner 2026-10-06「通达信内部的指标 我只需要作为一个复盘日志评论的领域归类」）：
+    // 88xxxx/999999（TDX 内部指标/显示码）经 DB/stock 档案（代码 索引）解析名称与角色——
+    // 页面据此展示领域归类并允许写卡（复用 review-loop 的 readStockProfiles，零出站）。
+    let anchor: { isAnchor: boolean; name: string | null; role: string | null; path: string | null } | null = null
+    // 查询范围：88xxxx（自制指标）/999999/000xxx（中证指数段——000001 上证指数等；
+    // 页面对非指数用法忽略该段，000xxx 深市股票页不受影响）；缓存命中为 O(1)。
+    if (/^88/.test(code) || code === '999999' || /^000/.test(code)) {
+      try {
+        const hit = await lookupAnchorEntry(code) // TTL 缓存（全量扫描仅在过期后台刷新）
+        anchor = {
+          isAnchor: hit !== undefined && hit.isAnchor,
+          name: hit !== undefined ? hit.name : null,
+          role: hit !== undefined ? hit.role : null,
+          path: hit !== undefined ? hit.path : null,
+        }
+      } catch (e) {
+        warnings.push(`锚点档案读取失败（不影响写卡）：${describeCause(e)}`)
+      }
+    }
     if (date !== null) {
       const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code, tradeDate: date })
       warnings.push(...located.warnings)
@@ -511,6 +592,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         const parsed = await deps.parseDoc(located.path)
         warnings.push(...parsed.warnings)
         cards = parsed.cards
+        const enriched: Array<Card & { images?: CardImage[] }> = []
+        for (const card of cards) {
+          const images = await readCardImages(deps.dataRoot, located.path, card.body)
+          warnings.push(...images.warnings)
+          enriched.push(images.images.length === 0 ? card : { ...card, images: images.images })
+        }
+        cards = enriched
       }
     }
     const cardedDates = await scanCardedDates(deps.dataRoot, code)
@@ -536,6 +624,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       exists,
       cards,
       cardedDates,
+      anchor,
       warnings,
     })
   }
@@ -692,6 +781,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     })
   }
 
+  /**
+   * 保存用户复盘图文卡片。
+   * 业务逻辑: 校验正文、图片与归属，再交给同一存储事务幂等提交。
+   * 关键判断: 无图片请求维持原行为；交易日待确认时不得静默落盘。
+   * 异常处理: 入参返回 4xx，文档归属与并发冲突返回 409，图片错误统一分档。
+   * 参数: req 为 JSON 请求，res 为响应。
+   * 返回: 创建或重复命中的锚点、路径与告警。
+   */
   async function handleCard(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
     const raw = await readBody(req)
     let parsed: unknown
@@ -733,6 +830,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       writeJsonError(res, 400, 'BODY_TOO_LONG', `body 超限（上限 ${BODY_LIMIT} 字符，实际 ${cardBody.length} 字符）`, { limit: BODY_LIMIT, actual: cardBody.length })
       return
     }
+    const images = validateImageUploads(body.images, cardBody)
     let tradeDate: string
     if (body.tradeDate === undefined || body.tradeDate === null || body.tradeDate === '') {
       // 归属待确认 MUST NOT 静默落盘（D-9：value===null 或 isTradingDay===null → 显式拒绝，页面确认后显式提交）。
@@ -764,13 +862,23 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       }
       name = body.name
     }
+    // 显式市场（owner 2026-10-06「代码标识加沪深」）：可选；缺省按代码段推断（store 内）。
+    let market: string | undefined
+    if (body.market !== undefined && body.market !== null && body.market !== '') {
+      if (body.market !== 'sh' && body.market !== 'sz' && body.market !== 'bj') {
+        writeJsonError(res, 400, 'INVALID_MARKET', `非法 market '${String(body.market)}'——期望 sh|sz|bj（缺省按代码段推断）`)
+        return
+      }
+      market = body.market
+    }
     const now = deps.now()
     try {
       const result = await deps.appendCard({
-        loc: { dataRoot: deps.dataRoot, code, name, tradeDate },
+        loc: { dataRoot: deps.dataRoot, code, name, tradeDate, market },
         body: cardBody,
         clientRequestId,
         now,
+        ...(body.images === undefined ? {} : { images }),
       })
       writeJson(res, 200, {
         status: result.status,
@@ -830,7 +938,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     return null
   }
 
-  /** POST /api/card/update：锚点不变、仅替换正文（写凭据/错误分档同写卡）。 */
+  /**
+   * 修订卡片正文及图片。
+   * 业务逻辑: 校验锚点、非空正文与可选附件，存储层同步清理移除图片。
+   * 关键判断: 锚点与时间不变，删除整卡必须使用专用接口。
+   * 异常处理: 未接线返回 501，无效请求返回 400，缺锚点和并发冲突分别返回 404、409。
+   * 参数: req 为修订 JSON，res 为响应。
+   * 返回: 修订结果与附件清理告警。
+   */
   async function handleCardUpdate(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
     if (deps.updateCard === undefined) {
       writeJsonError(res, 501, 'NOT_IMPLEMENTED', '卡片修订出口未接线（updateCard 未注入）')
@@ -853,8 +968,9 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       writeJsonError(res, 400, 'BODY_TOO_LONG', `body 超限（上限 ${BODY_LIMIT} 字符，实际 ${cardBody.length} 字符）`, { limit: BODY_LIMIT, actual: cardBody.length })
       return
     }
+    const images = validateImageUploads(body.images, cardBody)
     try {
-      const result = await deps.updateCard({ anchor, body: cardBody, dataRoot: deps.dataRoot })
+      const result = await deps.updateCard({ anchor, body: cardBody, dataRoot: deps.dataRoot, ...(body.images === undefined ? {} : { images }) })
       writeJson(res, 200, { status: 'updated', anchor: result.anchor, path: result.path, warnings: result.warnings })
     } catch (e) {
       if (e instanceof AnchorNotFoundError) {
@@ -897,6 +1013,61 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       }
       throw e
     }
+  }
+
+  /**
+   * 读取复盘文档同目录的图片。
+   * 业务逻辑: 校验标的和交易日，复用文档定位后读取 files 中的图片字节。
+   * 关键判断: 仅允许同源本地图片，文件类型和路径由图片 IO 模块复核。
+   * 异常处理: 无效入参返回 400；缺图、越界与 IO 错误交由统一错误出口。
+   * 参数: res 为响应，query 为标的、交易日与图片相对路径。
+   * 返回: 写入二进制响应，无业务返回值。
+   */
+  async function handleCardImage(res: TraderKitHttpResponse, query: Record<string, string>): Promise<void> {
+    const code = normalizeCode(query.code ?? '')
+    if (code === null) {
+      const invalid = invalidCodeBody(query.code ?? '')
+      writeJsonError(res, 400, invalid.error, invalid.message)
+      return
+    }
+    const tradeDate = toCanonicalDateParam(query.tradeDate ?? '')
+    if (tradeDate === null) {
+      writeJsonError(res, 400, 'INVALID_TRADE_DATE', '图片读取须提供有效 tradeDate')
+      return
+    }
+    const relativePath = query.relativePath ?? ''
+    const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code: query.code, tradeDate })
+    const image = await readImageFile(deps.dataRoot, located.path, relativePath)
+    res.writeHead(200, { 'Content-Type': image.mimeType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+    res.end(image.data)
+  }
+
+  /**
+   * 显式删除单张图片及卡片中的对应引用。
+   * 业务逻辑: 校验卡片锚点，将修订与文件删除交给同一存储事务。
+   * 关键判断: 不接收客户端替换正文，避免覆盖用户刚刚写入的其他内容。
+   * 异常处理: 未接线返回 501，无效入参返回 400；存储冲突由统一出口分档。
+   * 参数: req 为带写凭据的请求，res 为响应。
+   * 返回: 卡片更新结果与清理告警。
+   */
+  async function handleCardImageDelete(req: TraderKitHttpRequest, res: TraderKitHttpResponse): Promise<void> {
+    if (deps.deleteCardImage === undefined) {
+      writeJsonError(res, 501, 'NOT_IMPLEMENTED', '图片删除出口未接线')
+      return
+    }
+    const body = await readCardActionBody(req, res)
+    if (body === null) return
+    const anchorError = anchorParamError(body.anchor)
+    if (anchorError !== null) {
+      writeJsonError(res, 400, 'INVALID_ANCHOR', anchorError)
+      return
+    }
+    if (typeof body.relativePath !== 'string' || body.relativePath === '') {
+      writeJsonError(res, 400, 'INVALID_IMAGE_PATH', '图片删除须提供 relativePath')
+      return
+    }
+    const result = await deps.deleteCardImage({ anchor: (body.anchor as string).trim(), relativePath: body.relativePath, dataRoot: deps.dataRoot })
+    writeJson(res, 200, result)
   }
 
   /**
@@ -993,6 +1164,41 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     writeJson(res, 200, { status: 'registered', code, date: date !== '' ? date : null, prompt: buildOrganizePrompt(code, date), registeredAt })
   }
 
+  /** GET /api/index-quote：指数态行情（S10 腾讯源；读通道——owner 2026-10-06「科创50 也需要适配」）。 */
+  async function handleIndexQuote(res: TraderKitHttpResponse, query: Record<string, string>): Promise<void> {
+    if (deps.getIndexQuote === undefined) {
+      writeJsonError(res, 501, 'NOT_IMPLEMENTED', '指数行情出口未接线（getIndexQuote 未注入）')
+      return
+    }
+    const codeRaw = query.code ?? ''
+    const code = normalizeCode(codeRaw)
+    if (code === null) {
+      const invalid = invalidCodeBody(codeRaw)
+      writeJsonError(res, 400, invalid.error, invalid.message, { codeRaw })
+      return
+    }
+    try {
+      const [r, t0] = await Promise.all([
+        deps.getIndexQuote(code),
+        deps.resolveTradeDate({}), // 指数态交易日定位（owner 2026-10-06 反馈「交易日定位失效」——与股票页同一 T0 事实源）
+      ])
+      writeJson(res, 200, {
+        code,
+        available: r.available === true,
+        name: r.name,
+        price: r.price,
+        pct: r.pct,
+        source: r.source,
+        errors: r.errors,
+        detail: r.detail,
+        fetchedAt: r.fetchedAt,
+        tradeDate: { value: t0.value, source: t0.source, isTradingDay: t0.isTradingDay },
+      })
+    } catch (e) {
+      writeJsonError(res, 502, 'INDEX_QUOTE_FAILED', describeCause(e))
+    }
+  }
+
   function handleAsset(res: TraderKitHttpResponse, rel: string): void {
     if (!isSafeAssetName(rel)) {
       writeJsonError(res, 404, 'NOT_FOUND', '资产不存在（穿越/白名单外扩展名一律 404，避免目录探测）')
@@ -1074,12 +1280,36 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       await handleCardDelete(req, res)
       return
     }
+    if (rawPath === pageExact + '/api/card/image') {
+      if (method !== 'GET') {
+        writeMethodNotAllowed(res, 'GET')
+        return
+      }
+      await handleCardImage(res, parseQuery(query))
+      return
+    }
+    if (rawPath === pageExact + '/api/card/image/delete') {
+      if (method !== 'POST') {
+        writeMethodNotAllowed(res, 'POST')
+        return
+      }
+      await handleCardImageDelete(req, res)
+      return
+    }
     if (rawPath === pageExact + '/api/organize') {
       if (method !== 'POST') {
         writeMethodNotAllowed(res, 'POST')
         return
       }
       await handleOrganize(req, res)
+      return
+    }
+    if (rawPath === pageExact + '/api/index-quote') {
+      if (method !== 'GET') {
+        writeMethodNotAllowed(res, 'GET')
+        return
+      }
+      await handleIndexQuote(res, parseQuery(query))
       return
     }
     if (rawPath === pageExact + '/api' || rawPath.startsWith(pageExact + '/api/')) {
@@ -1113,6 +1343,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     writeJsonError(res, 404, 'NOT_FOUND', '路径不存在')
   }
 
+  // 装配预热（fire-and-forget，owner 2026-10-06 反馈「切换响应速度慢」）：锚点档案
+  // 全量扫描与 T0 内存缓存提前完成——消除重启/首次切换的同步等待。失败静默（运行期
+  // 照常按需重试）。
+  if (deps.dataRoot !== '') {
+    void Promise.resolve(deps.resolveTradeDate({})).catch(() => {}) // T0 内存缓存预热
+  }
+
   return async function reviewHandler(req, res) {
     try {
       const url = typeof req.url === 'string' && req.url !== '' ? req.url : '/'
@@ -1137,6 +1374,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         if (method === 'POST' && (rawPath === pageExact + '/api/card'
           || rawPath === pageExact + '/api/card/update'
           || rawPath === pageExact + '/api/card/delete'
+          || rawPath === pageExact + '/api/card/image/delete'
           || rawPath === pageExact + '/api/organize') && writeCredentialValid(req)) {
           await route(req, res, rawPath, query, false)
           return
@@ -1148,6 +1386,18 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     } catch (e) {
       // 兜底：handler 不得向宿主抛（宿主把 rejection 折叠成 400）。
       try {
+        if (e instanceof ReviewImageError) {
+          writeJsonError(res, e.status, e.code, e.message)
+          return
+        }
+        if (e instanceof AnchorNotFoundError) {
+          writeJsonError(res, 404, 'ANCHOR_NOT_FOUND', e.message)
+          return
+        }
+        if (e instanceof ConcurrentWriteError) {
+          writeJsonError(res, 409, 'CONCURRENT_WRITE', e.message)
+          return
+        }
         writeJsonError(res, 500, 'INTERNAL', describeCause(e))
       } catch {
         /* 响应已不可写（客户端断开）——静默 */
@@ -1219,6 +1469,9 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     // 修订/删除（owner 2026-10-05 追授）：与追加同一 store 实现，路由层只做凭据与校验。
     updateCard,
     deleteCard,
+    deleteCardImage,
+    // 指数行情（owner 2026-10-06 追授：科创50 等指数锚点态显示真行情）。
+    getIndexQuote: (code) => data.getIndexQuote(code),
     // T0 服务出口 fetchedAt 可空，context.ts 的 ResolveTradeDateFn 形状偏紧——装配点结构适配（不改 context.ts）。
     resolveTradeDate: createTradeDateResolver(data.resolveTradeDate as unknown as ResolveTradeDateFn).resolve,
     getLimitReason: data.getLimitReason,
@@ -1300,7 +1553,10 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/update', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/delete', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/image', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/card/image/delete', handler },
     { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/organize', handler },
+    { kind: 'exact', path: REVIEW_PAGE_PATH + '/api/index-quote', handler },
     { kind: 'prefix', path: REVIEW_PAGE_PATH, handler },
   ]
   ctx.effect(() => {

@@ -92,6 +92,11 @@
   `POST /review/api/organize`（写凭据同写卡）登记当前标的/日期意图并复制服务端固定指令
   （`buildOrganizePrompt` 单一事实源），用户到 DSH 会话粘贴发送触发 agent；**插件不自建 agent 运行**
   （页面与 agent 会话间无推送通道为既定边界，沿 review-loop 草案纪律）。
+- **2026-10-07：owner 两点界面裁决（复盘页）**——①「整理」按钮自 B3 工具框**移到交易日右侧**
+  （B2 交易日行，与日期输入同排；禁用口径不变：无标的/写通道不可用）；②输入区「同步展示渲染」
+  取消正文镜像——**预览只保留已插入图片的缩略图**（输入框已显示原文，整段文本重复渲染是噪声；
+  缩略图口径与上传口径同源 `imagePreviewItems`）。③同日移除「取消草稿」按钮（B3 只剩「添加图片」，
+  草稿释放改由保存成功承载；归属确认横幅的出路只剩「确认归属到 X」或刷新页面）。
 
 ## 5. 迭代一重排（2026-09-27）
 
@@ -106,10 +111,22 @@
 | 数据面分工：TQ 走官方 skill（不固化进 TS），三方接口（S7/S5/S8）封装插件工具 | 拍板 | 阶段 3 的「connector-tdx + research-data 搬运」改为「三方接口工具 + TQ skill 安装器」；connector-tdx / research-data **不搬** |
 | 写分区例外：`DB/review/`、`agent/DB/temp/dsh-trader-kit/` | 立约 | 「vault 写入：阶段 4 起才触 vault」在本迭代对这两条白名单路径开例外；其余既定产物区不动（AGENTS.md 与 vault-integration 需同步登记） |
 | 阶段 5 折算：本迭代交付「阶段 3 数据面子集 + 阶段 4 写分区子集 + 阶段 5 复盘 skill 子集」 | 立约 | 阶段 1 骨架已完成；阶段 6（嵌入页 + 策略盯盘）不在本迭代 |
-| D-TQ：页面所需业务日期/名称的取数边界（R2/R5 的 `get_match_stkinfo` / `HqDate` vs「TQ 不固化」） | **待裁决**（默认处置 = 选项 A） | 默认处置：名称走 T2/S8 → 历史卡 frontmatter → 仅代码；日期走 `resolveTradeDate`（`iteration-1-contracts §1`）。复审触发条件：owner 裁决选项 B，或「插件直调 17709」边界放开的裁决 |
+| D-TQ：页面所需业务日期/名称的取数边界（R2/R5 的 `get_match_stkinfo` / `HqDate` vs「TQ 不固化」） | **已裁决（2026-10-06，review-loop）：选项 B（局部放开）** | 名称链 = 历史卡 frontmatter → T2/S8 → 行情名称源 → **TQ-Local `get_stock_info` 兜底**（`nameSource: 'tq-local'`）；日期仍走 `resolveTradeDate`。**放宽点**（owner 裁决原文）：仅 `get_stock_info` 只读、仅回环、仅经 `src/data/http.ts` 同一条通道（白名单常量与四重复核在该文件）、仅 `/api/enrich` 调用链（MUST NOT 进 `/api/local`）、开关 `sources.tqLocal.enabled` 默认开可关；**MUST NOT** 放开任何行情/交易接口。落地见 review-loop 的 `tq-local-lookup` capability 与 design D-11 |
 | E4：spike 提前 + 选股公式方言并入清单（§4） | 拍板，但本迭代**部分未落地** | change 1 探针按 Non-Goals 排除方言探测；选股语句方言探测归阶段 6 前独立 spike，本条不再视为已闭环 |
 | spike-tdx-embed 结论（2026-09-27 实测） | **P1 受限 → 采用 http 同端口页面**：TDX 内嵌内核 Chrome 81/TdxW，探针页渲染与传参 PASS；联动 6 写法 TDX 侧 0/6（window.open 被拦）、反向跟随不存在；**联动改用 `http://www.treeid/code_<代码>` 导航**（现网生产验证）；C 层免认证只读已签字采纳 | change 4 页面「在 TDX 打开标的」用 treeid 链接；B1 不自动跟随 TDX 选中（输码/页面内点选为入口）；写接口仍只认 A 层（TDX 内未验证存活 → 页面只读降级 + DSH 侧写卡）；报告 `docs/spikes/tdx-embed.md` |
 
 **本迭代 change 映射**：change 1 `spike-tdx-embed`（可行性闸门）/ 2 `data-foundation`
 （数据目录范式 + T1/T2 + T0 `get_trade_date`）/ 3 `tq-skill-installer`（TQ skill 安装器）/
-4 `review-page`（复盘页面 + 卡片存储）/ 5 `daily-summary`（每日汇总与 AI 附注）。
+4 `review-page`（复盘页面 + 卡片存储）/ 5 `daily-summary`（每日汇总与 AI 附注）/
+6 `review-loop`（闭环：DSH 面板触发 + `DB/stock` 标的档案复用与首卡懒创建 + 当日盘面 md +
+TQ-Local 名称兜底）。
+
+**review-loop 相关 owner 裁决（2026-10-06）**：
+- 标的上下文**复用 `DB/stock` 既有档案**（不新造目录）；新增键 `角色` = 给 agent 的
+  提示词重点内容（`热点标签` 等仅保存与展示、不进 agent 上下文）。
+- **全部标的建档 = 首卡懒创建**（首次写该标的复盘卡片时异步 create-only 建骨架）；
+  `DB/stock/` 因此成为第 4 条写路径（只建不改）。
+- **DSH 面板入口 + 触发按钮**：经宿主原生槽（`sidebar.panellist` + `main`）注册；
+  按钮把固定触发短语发进会话（`ctx.conversation.send`），agent 由会话执行既有 skill。
+- **当日盘面 md**：`DB/review/<YYYYMM>/<YYYYMMDD>-summary.md`，四段（指数/情绪/赚钱效应/题材），
+  同交易日**覆盖重写**（唯一生产者 `review_write_brief`）。

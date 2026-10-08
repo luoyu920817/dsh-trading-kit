@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REVIEW_BASE_PATH, REVIEW_PAGE_PATH, type ReviewHandlerDeps } from '../../src/routes/review.ts'
 import { REVIEW_HTML } from '../../src/client/review/index.html.ts'
-import { appendCard, locateDoc, parseDoc } from '../../src/review/store.ts'
+import { appendCard, locateDoc, parseDoc, scanDailyCardTargets } from '../../src/review/store.ts'
 import { createNameResolver } from '../../src/review/context.ts'
 import { runLimitReasonBacktrack, type LimitDayResponse } from '../../src/review/enrich.ts'
 import type { TraderKitHttpRequest, TraderKitHttpResponse } from '../../src/context-types.ts'
@@ -179,6 +179,8 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
         confidence: r.confidence,
       }
     },
+    // review-loop：当日清单（真实 store 实现；`/api/day` 用）。
+    scanDailyCardTargets: (tradeDate: string) => scanDailyCardTargets(tradeDate, dataRoot),
     htmlTemplate: REVIEW_HTML,
     readAsset: () => null,
     basePath: REVIEW_BASE_PATH,

@@ -34,16 +34,17 @@ describe('dsh-trader-kit 装配面', () => {
     expect(name).toBe('dsh-trader-kit')
   })
 
-  it('注册了 3 个数据面工具（T0/T1/T2）+ 提供 traderKit service', () => {
+  it('注册了 4 个数据面工具（T0/T1/T2 + TQ-Local 兜底）+ 提供 traderKit service', () => {
     const { ctx, registeredTools, provided } = createFakeContext()
     // 测试零真实出站：启动探测（diagnostics.probe）在单测中显式关闭（生产默认开）。
     expect(() => apply(ctx as never, { diagnostics: { probe: { enabled: false } } })).not.toThrow()
-    // 波 3 起：数据面 3 + change 5 每日汇总 4 + change 3 tq_skill_manage 1 = 8。
-    expect(registeredTools.length).toBe(8)
+    // review-loop 起：数据面 4（+ get_stock_basics）+ tq_skill_manage 1 + 每日汇总 4 + review-loop 2 = 11。
+    expect(registeredTools.length).toBe(11)
     expect(registeredTools).toEqual([
-      'get_trade_date', 'get_limit_reason', 'get_concepts',
+      'get_trade_date', 'get_limit_reason', 'get_concepts', 'get_stock_basics',
       'tq_skill_manage',
       'review_daily_scan', 'review_read_daily', 'review_append_ainote', 'review_daily_report',
+      'review_stock_profiles', 'review_write_brief',
     ])
     const api = provided.traderKit as { health: { status(): unknown } } | undefined
     expect(api).toBeDefined()

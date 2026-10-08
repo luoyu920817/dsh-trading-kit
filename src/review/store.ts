@@ -33,6 +33,9 @@ import { ensureDir } from '../paths/fs.ts'
 import { resolveArea } from '../paths/resolve.ts'
 import { NAME_SEGMENT_MAX, sanitizeNameSegment } from '../paths/sanitize.ts'
 import { buildAnchor, CARD_ANCHOR_RE, normalizeCode } from './anchor.ts'
+import { qualifyCode } from './ident.ts'
+import { parseImageEmbeds } from './image-refs.ts'
+import { ReviewImageError, rollbackImageUploads, settleImageDeletes, stageImageDeletes, validateImageUploads, writeImageUploads, type ImageUpload } from './images.ts'
 import { anchorTimeToHeading, formatAnchorTime, formatZonedIso } from './format.ts'
 import { encodeStoreWarning, type AInote, type Card, type StoreWarning } from './types.ts'
 import {
@@ -52,7 +55,7 @@ import {
 } from './md/parse.ts'
 
 /** 契约 §3：文档定位入参（tradeDate 为 canonical `YYYY-MM-DD`）。 */
-export type Loc = { dataRoot: string; code: string; name?: string; tradeDate: string }
+export type Loc = { dataRoot: string; code: string; name?: string; tradeDate: string; /** 显式市场（URL 前缀/写卡 payload；缺省按代码段推断——owner 2026-10-06「代码标识加沪深」）。 */ market?: string | null }
 /** 契约 §3：五个导出一律返回 warnings: string[]。 */
 export type Result<T> = T & { warnings: string[] }
 
@@ -168,6 +171,8 @@ function escapeRe(s: string): string {
 
 interface NormalizedLoc {
   code: string
+  /** 带市场前缀的代码标识（`sh000001`）——文件名代码段与显示标识用（owner 2026-10-06）。 */
+  qualified: string
   compact: string
   /** 经净化、兜底后的名称段（与文件名一致；空名回落代码段）。 */
   nameSegment: string
@@ -182,7 +187,7 @@ function normalizeLoc(loc: Loc): NormalizedLoc {
   }
   const compact = toCompactDate(loc.tradeDate)
   const sanitized = sanitizeNameSegment(loc.name ?? '', code)
-  return { code, compact, nameSegment: sanitized.value, nameTruncated: sanitized.nameTruncated }
+  return { code, qualified: qualifyCode(code, loc.market), compact, nameSegment: sanitized.value, nameTruncated: sanitized.nameTruncated }
 }
 
 interface DocCandidate {
@@ -200,7 +205,7 @@ async function scanCandidates(areaDirAbs: string, code: string, compact: string)
     if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
     throw e
   }
-  const re = new RegExp(`^${escapeRe(code)}_.+_${escapeRe(compact)}\\.md$`)
+  const re = new RegExp(`^(?:sh|sz|bj)?${escapeRe(code)}_.+_${escapeRe(compact)}\\.md$`)
   const out: DocCandidate[] = []
   for (const entry of entries) {
     if (!entry.isFile() || !re.test(entry.name)) continue
@@ -211,12 +216,38 @@ async function scanCandidates(areaDirAbs: string, code: string, compact: string)
   return out
 }
 
-/** 多命中确定性选择：mtime 最新；平局按文件名字典序（code unit 序）。 */
-function selectCandidate(candidates: DocCandidate[]): DocCandidate {
+/** 多命中确定性排序：mtime 最新；平局按文件名字典序（code unit 序）。 */
+function sortDeterministic(candidates: DocCandidate[]): DocCandidate[] {
   return [...candidates].sort((a, b) => {
     if (a.mtimeMs !== b.mtimeMs) return b.mtimeMs - a.mtimeMs
     return a.fileName < b.fileName ? -1 : a.fileName > b.fileName ? 1 : 0
-  })[0]
+  })
+}
+
+/** 文件名名称段提取（`<代码>_<名称>_<YYYYMMDD>.md` 的 `<名称>`；不匹配 → null）。 */
+function fileNameNameSegment(fileName: string, code: string, compact: string): string | null {
+  const prefix = `${code}_`
+  const suffix = `_${compact}.md`
+  if (!fileName.startsWith(prefix) || !fileName.endsWith(suffix)) return null
+  return fileName.slice(prefix.length, fileName.length - suffix.length)
+}
+
+/**
+ * 多命中确定性选择（owner 2026-10-06 修订）：① 名称段精确匹配优先（名称即身份——
+ * 指数与同码深市股票各自共存）；② 名称未命中取 mtime 最新（更名/ST 复用既有文档）；
+ * ③ 平局文件名字典序。`byName=true` 表示唯一精确命中（调用方据此免告警）。
+ */
+function selectCandidate(
+  candidates: DocCandidate[],
+  code: string,
+  compact: string,
+  requestedNameSegment: string | null,
+): { selected: DocCandidate; byName: boolean } {
+  if (requestedNameSegment !== null && requestedNameSegment !== '') {
+    const named = candidates.filter((c) => fileNameNameSegment(c.fileName, code, compact) === requestedNameSegment)
+    if (named.length === 1) return { selected: named[0], byName: true }
+  }
+  return { selected: sortDeterministic(candidates)[0], byName: false }
 }
 
 function multiHitWarning(selected: DocCandidate, all: DocCandidate[]): StoreWarning {
@@ -235,13 +266,14 @@ function multiHitWarning(selected: DocCandidate, all: DocCandidate[]): StoreWarn
  * 本函数不做任何写操作。
  */
 export async function locateDoc(loc: Loc): Promise<Result<{ path: string }>> {
-  const { code, compact } = normalizeLoc(loc)
-  const resolved = resolveArea(loc.dataRoot, 'review', { code, name: loc.name ?? '', date: compact })
+  const { code, qualified, compact, nameSegment } = normalizeLoc(loc)
+  const resolved = resolveArea(loc.dataRoot, 'review', { code: qualified, name: loc.name ?? '', date: compact })
   const warnings: string[] = []
   const candidates = await scanCandidates(resolved.areaDirAbs, code, compact)
   if (candidates.length > 0) {
-    const selected = selectCandidate(candidates)
-    if (candidates.length > 1) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
+    const nameSeg = nameSegment !== code ? nameSegment : null
+    const { selected, byName } = selectCandidate(candidates, code, compact, nameSeg)
+    if (candidates.length > 1 && !byName) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
     return { path: selected.path, warnings }
   }
   if (resolved.nameTruncated) {
@@ -472,6 +504,7 @@ interface AppendInput {
   clientRequestId?: string
   generatedAt?: string
   dataSources?: string[]
+  images?: ImageUpload[]
 }
 
 /**
@@ -529,10 +562,17 @@ function assertOwnership(
   }
 }
 
-/** 追加主流程：定位 → 互斥 → re-read + stat 校验重试 → 最小修补 → 原子写。 */
+/**
+ * 追加主流程。
+ * 业务逻辑: 定位文档、同锁读取复核、最小修补，然后提交图片和原子文档。
+ * 关键判断: requestId 幂等先于附件创建，写图仅允许正文已校验引用。
+ * 异常处理: 文档失败只回收本次新图，可重试文件系统错误沿既有退避重试。
+ * 参数: input 包含文档归属、正文、附注元数据与已校验附件。
+ * 返回: 创建、重复或跳过状态，锚点、路径及告警。
+ */
 async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
-  const { code, compact, nameSegment, nameTruncated } = normalizeLoc(input.loc)
-  const resolved = resolveArea(input.loc.dataRoot, 'review', { code, name: input.loc.name ?? '', date: compact }, { forWrite: true })
+  const { code, qualified, compact, nameSegment, nameTruncated } = normalizeLoc(input.loc)
+  const resolved = resolveArea(input.loc.dataRoot, 'review', { code: qualified, name: input.loc.name ?? '', date: compact }, { forWrite: true })
   const absPath = resolved.absPath
   const hooks = activeHooks
   const retryDelays = hooks.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
@@ -565,8 +605,10 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
         lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
         continue
       }
-      const selected = candidates.length > 0 ? selectCandidate(candidates) : null
-      if (selected !== null && candidates.length > 1) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
+      const nameSeg2 = nameSegment !== code ? nameSegment : null
+      const picked = candidates.length > 0 ? selectCandidate(candidates, code, compact, nameSeg2) : null
+      const selected = picked?.selected ?? null
+      if (selected !== null && candidates.length > 1 && picked?.byName !== true) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
       const targetPath = selected?.path ?? absPath
 
       // -- re-read
@@ -687,11 +729,13 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
       const merged = assembleInsert(base, insertOffsetOriginal + shift, sectionText, parse.eol)
       const content = bom ? `\uFEFF${merged}` : merged
 
-      // -- 原子写
+      // -- 图片与文档同锁事务
+      const createdImages = await writeImageUploads(input.loc.dataRoot, targetPath, input.images ?? [])
       try {
         await hooks.onPhase?.('before-write', targetPath, attempt)
         await atomicWrite(targetPath, content)
       } catch (e) {
+        await rollbackImageUploads(createdImages, e)
         if (isRetryableFsError(e)) {
           lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
           continue
@@ -713,12 +757,13 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
   })
 }
 
-/** 追加卡片（契约 §3 `appendCard`）。 */
+/** 追加卡片。业务逻辑: 校验正文附件并同锁提交。关键判断: 附件必须有实际引用。异常处理: 拒绝空正文及无效图片。参数: loc/body/images/now/requestId。返回: 状态、锚点、路径、告警。 */
 export async function appendCard(input: {
   loc: Loc
   body: string
   now?: Date
   clientRequestId?: string
+  images?: ImageUpload[]
 }): Promise<Result<{ status: 'created' | 'duplicate'; anchor: string; path: string }>> {
   if (typeof input.body !== 'string' || input.body.trim() === '') {
     throw new Error('appendCard: 卡片正文为空——须提供非空白正文（页面层负责 4xx 前置校验）')
@@ -729,6 +774,7 @@ export async function appendCard(input: {
     body: input.body,
     now: input.now ?? new Date(),
     clientRequestId: input.clientRequestId,
+    images: validateImageUploads(input.images, input.body),
   })
   const status = outcome.status === 'duplicate' ? 'duplicate' as const : 'created' as const
   return { status, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
@@ -768,12 +814,14 @@ function parseCardAnchor(anchor: string): { compact: string; code: string } {
   return { compact: m[1], code: m[2] }
 }
 
-/** 修改主流程（update/delete 共用模板）：定位 → 互斥 → re-read + stat 复核重试 → 变换 → 原子写。 */
+/** 修改主流程。业务逻辑: 同锁定位、复核、图片暂存与文档原子提交。关键判断: 单图删除只移除真实嵌入并保留空卡片。异常处理: 文档失败恢复原图并回收新图。参数: anchor/root/mode/body/images/relativePath。返回: 状态、锚点、路径、告警。 */
 async function transformDailyDoc(input: {
   anchor: string
   dataRoot: string
-  mode: 'update' | 'delete'
+  mode: 'update' | 'delete' | 'delete-image'
   body?: string
+  images?: ImageUpload[]
+  relativePath?: string
 }): Promise<{ status: 'updated' | 'deleted'; anchor: string; path: string; warnings: string[] }> {
   const { compact, code } = parseCardAnchor(input.anchor)
   const resolved = resolveArea(input.dataRoot, 'review', { code, name: '', date: compact }, { forWrite: true })
@@ -802,11 +850,46 @@ async function transformDailyDoc(input: {
       }
       if (candidates.length === 0) throw notFound('该 (代码, 交易日) 不存在文档')
       const warnings: string[] = []
-      const selected = selectCandidate(candidates)
-      if (candidates.length > 1) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
-      const targetPath = selected.path
+      // owner 2026-10-06：同码跨市场文档共存（000001 指数/股票）——锚点只存在于其中
+      // 一份，按确定性序**逐候选查找含该锚点的文档**（MUST NOT 先选一份再查找，否则
+      // 编辑/删除可能落到同码另一标的的文档）。多命中且非名称唯一命中时保留告警。
+      const ordered = sortDeterministic(candidates)
+      let targetPath: string | null = null
+      let text: string | null = null
+      let bom = false
+      let section: ParsedSection | null = null
+      let fm: FrontmatterValues = {}
+      let parse: DocumentParse | null = null
+      for (const candidate of ordered) {
+        let candidateBuf: Buffer
+        try {
+          candidateBuf = await readFile(candidate.path)
+        } catch {
+          continue // 读取瞬间消失 → 尝试下一候选
+        }
+        const candidateBom = candidateBuf.length >= 3 && candidateBuf[0] === 0xef && candidateBuf[1] === 0xbb && candidateBuf[2] === 0xbf
+        const candidateText = candidateBom ? candidateBuf.toString('utf8').slice(1) : candidateBuf.toString('utf8')
+        const candidateParse = parseDocument(candidateText)
+        const candidateFm = candidateParse.frontmatter === null ? {} : parseFrontmatterValues(candidateParse.frontmatter.bodyLines)
+        const candidateSection = candidateParse.sections.find((sec) => sec.kind === 'card' && sec.anchor === input.anchor)
+        if (candidateSection !== undefined) {
+          targetPath = candidate.path
+          text = candidateText
+          bom = candidateBom
+          section = candidateSection
+          fm = candidateFm
+          parse = candidateParse
+          break
+        }
+      }
+      if (targetPath === null || section === null || text === null || parse === null) {
+        throw notFound('所有同码文档中均不存在该卡片锚点')
+      }
+      if (candidates.length > 1) {
+        warnings.push(encodeStoreWarning(multiHitWarning({ path: targetPath, fileName: targetPath.split(/[\/]/).pop() ?? '', mtimeMs: 0 }, candidates)))
+      }
 
-      // -- re-read
+      // -- 快照 + 复核（同追加纪律；以命中锚点的文档为对象）
       let buf: Buffer
       try {
         buf = await readFile(targetPath)
@@ -815,8 +898,6 @@ async function transformDailyDoc(input: {
         lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
         continue
       }
-
-      // -- 快照 + 复核（同追加纪律）
       const snapshot = await statSafe(targetPath)
       let current: StatSnapshot | null = null
       try {
@@ -829,14 +910,6 @@ async function transformDailyDoc(input: {
         lastFailure = { kind: 'mismatch' }
         continue
       }
-
-      // -- 解析 + 归属校验（幽灵锚点按未找到处置，MUST NOT 修改）
-      const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
-      const text = bom ? buf.toString('utf8').slice(1) : buf.toString('utf8')
-      const parse = parseDocument(text)
-      const fm = parse.frontmatter === null ? {} : parseFrontmatterValues(parse.frontmatter.bodyLines)
-      const section = parse.sections.find((s) => s.kind === 'card' && s.anchor === input.anchor)
-      if (section === undefined) throw notFound('文档中不存在该卡片锚点')
       const fmCode = typeof fm.code === 'string' ? fm.code : null
       const fmTrade = typeof fm.tradeDate === 'string' ? fm.tradeDate : null
       if (fmCode === null || fmTrade === null || fmCode !== section.code || toCompactDate(fmTrade) !== section.date) {
@@ -844,6 +917,14 @@ async function transformDailyDoc(input: {
       }
 
       // -- 变换（字节级：delete = 整节移除；update = 保留 H2+meta 行字节、替换其后的正文跨度）
+      const oldBody = toParsedCard(section, parse.eol).body
+      let nextBody = input.body ?? ''
+      if (input.mode === 'delete-image') {
+        const refs = parseImageEmbeds(oldBody).filter((r) => r.relativePath === input.relativePath)
+        if (refs.length === 0) throw new ReviewImageError('IMAGE_NOT_FOUND', '卡片不含该图片引用', 404)
+        nextBody = oldBody
+        for (const ref of [...refs].reverse()) nextBody = nextBody.slice(0, ref.start) + nextBody.slice(ref.end)
+      }
       let merged: string
       if (input.mode === 'delete') {
         merged = text.slice(0, section.startOffset) + text.slice(section.endOffset)
@@ -854,26 +935,35 @@ async function transformDailyDoc(input: {
           if (CARD_META_RE.test(lineText) || CARD_REQUEST_RE.test(lineText)) lastMetaIdx = i
           else break
         }
-        const bodyLines = (input.body ?? '').trim().replace(/\r\n/g, '\n').split('\n')
+        const bodyLines = nextBody.trim().replace(/\r\n/g, '\n').split('\n')
         const bodyStart = section.lines[lastMetaIdx].eolStart + 1
         const span = parse.eol + bodyLines.join(parse.eol) + parse.eol
         merged = text.slice(0, bodyStart) + span + text.slice(section.endOffset)
       }
       const content = bom ? `\uFEFF${merged}` : merged
 
-      // -- 原子写
+      // -- 图片与文档同锁事务
+      const retained = new Set(parseImageEmbeds(input.mode === 'delete' ? '' : nextBody).map((r) => r.relativePath))
+      const removed = parseImageEmbeds(oldBody).map((r) => r.relativePath).filter((ref) => !retained.has(ref))
+      const createdImages = await writeImageUploads(input.dataRoot, targetPath, input.images ?? [])
+      let stagedImages: Awaited<ReturnType<typeof stageImageDeletes>> = []
       try {
+        stagedImages = await stageImageDeletes(input.dataRoot, targetPath, removed)
         await hooks.onPhase?.('before-write', targetPath, attempt)
         await atomicWrite(targetPath, content)
       } catch (e) {
+        const restorationWarnings = await settleImageDeletes(stagedImages, false)
+        if (restorationWarnings.length && e instanceof Error) e.message += `；${restorationWarnings.join('；')}`
+        await rollbackImageUploads(createdImages, e)
         if (isRetryableFsError(e)) {
           lastFailure = { kind: 'fs', message: e instanceof Error ? e.message : String(e) }
           continue
         }
         throw e
       }
+      warnings.push(...await settleImageDeletes(stagedImages, true))
       return {
-        status: input.mode === 'update' ? ('updated' as const) : ('deleted' as const),
+        status: input.mode === 'delete' ? ('deleted' as const) : ('updated' as const),
         anchor: input.anchor,
         path: targetPath,
         warnings,
@@ -892,26 +982,33 @@ async function transformDailyDoc(input: {
   })
 }
 
-/** 修订卡片正文（owner 2026-10-05 追授）：锚点与 meta 行字节不变，仅替换正文。 */
+/** 修订卡片。业务逻辑: 替换正文、提交附件及回收移除引用。关键判断: 保留锚点meta。异常处理: 空正文拒绝，图片错误透传。参数: anchor/body/root/images。返回: 更新状态与告警。 */
 export async function updateCard(input: {
   anchor: string
   body: string
   dataRoot: string
+  images?: ImageUpload[]
 }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
   if (typeof input.body !== 'string' || input.body.trim() === '') {
     throw new Error('updateCard: 卡片正文为空——删除请用 deleteCard 通道（MUST NOT 以空正文冒充删除）')
   }
-  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body })
+  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body, images: validateImageUploads(input.images, input.body) })
   return { status: 'updated' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 删除卡片分节（owner 2026-10-05 追授）：该分节字节原样移除，其余内容保真。 */
+/** 删除卡片。业务逻辑: 移除分节并清理附件。关键判断: 其他分节保真。异常处理: 失败恢复附件。参数: anchor/root。返回: 删除状态及告警。 */
 export async function deleteCard(input: {
   anchor: string
   dataRoot: string
 }): Promise<Result<{ status: 'deleted'; anchor: string; path: string }>> {
   const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'delete' })
   return { status: 'deleted' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
+}
+
+/** 删除卡片图片。业务逻辑: 精准移除同路径嵌入并删除文件。关键判断: 最后图删除仍保留空卡片。异常处理: 未引用抛404，事务失败恢复。参数: anchor/root/relativePath。返回: 更新状态及告警。 */
+export async function deleteCardImage(input: { anchor: string; dataRoot: string; relativePath: string }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
+  const outcome = await transformDailyDoc({ ...input, mode: 'delete-image' })
+  return { ...outcome, status: 'updated' }
 }
 
 // ---------------------------------------------------------------------------
@@ -949,9 +1046,11 @@ export async function scanDailyCardTargets(
     throw e
   }
 
-  const re = /^(\d{6})_.+_(\d{8})\.md$/
+  const re = /^((?:sh|sz|bj)?)(\d{6})_.+_(\d{8})\.md$/
   interface Target {
     code: string
+    /** 市场前缀（文件代码段带前缀时非 null——owner 2026-10-06「代码标识加沪深」；旧式无前缀文件为 null）。 */
+    qualifier: string | null
     name: string
     path: string
     cardCount: number
@@ -971,14 +1070,15 @@ export async function scanDailyCardTargets(
     }
     for (const f of files) {
       const m = re.exec(f.name)
-      if (m === null || m[2] !== compact) continue
+      if (m === null || m[3] !== compact) continue
       const full = join(reviewBase, month.name, f.name)
       const parsed = await parseDoc(full)
       warnings.push(...parsed.warnings)
       const st = await stat(full)
-      const nameFromFile = f.name.slice(m[1].length + 1, f.name.length - (compact.length + 3))
+      const nameFromFile = f.name.slice(m[1].length + m[2].length + 1, f.name.length - (compact.length + 3))
       const target: Target = {
-        code: m[1],
+        code: m[2],
+        qualifier: m[1] === '' ? null : m[1],
         name: typeof parsed.frontmatter.name === 'string' && parsed.frontmatter.name !== ''
           ? parsed.frontmatter.name
           : nameFromFile,
@@ -988,9 +1088,10 @@ export async function scanDailyCardTargets(
         mtimeMs: st.mtimeMs,
         fileName: f.name,
       }
-      const list = byCode.get(target.code) ?? []
+      const groupKey = (target.qualifier ?? '') + target.code
+      const list = byCode.get(groupKey) ?? []
       list.push(target)
-      byCode.set(target.code, list)
+      byCode.set(groupKey, list)
     }
   }
 
@@ -1002,7 +1103,11 @@ export async function scanDailyCardTargets(
     if (list.length > 1) {
       warnings.push(encodeStoreWarning(multiHitWarning(winner, list)))
     }
-    out.push({ code: winner.code, name: winner.name, path: winner.path, cardCount: winner.cardCount, hasAinote: winner.hasAinote })
+    const entry: { code: string; name: string; path: string; cardCount: number; hasAinote: boolean; qualifier?: string } = {
+      code: winner.code, name: winner.name, path: winner.path, cardCount: winner.cardCount, hasAinote: winner.hasAinote,
+    }
+    if (winner.qualifier !== null) entry.qualifier = winner.qualifier
+    out.push(entry)
   }
   return out
 }

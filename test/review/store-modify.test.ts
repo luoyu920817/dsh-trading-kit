@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
-import { appendAinote, appendCard, deleteCard, parseDoc, setStoreWriteHooksForTest, updateCard, type Loc } from '../../src/review/store.ts'
+import { appendAinote, appendCard, deleteCard, locateDoc, parseDoc, setStoreWriteHooksForTest, updateCard, type Loc } from '../../src/review/store.ts'
 import { NOW_1432, NOW_1500, NOW_1600, TRADE_DATE, TRADE_DATE_COMPACT, makeTempRoot, reviewDir, writeRaw } from './helpers.ts'
 
 afterEach(() => setStoreWriteHooksForTest(undefined))
@@ -18,6 +18,11 @@ function loc(root: string): Loc {
 
 function readText(path: string): string {
   return readFileSync(path, 'utf8')
+}
+
+/** 路径分隔符归一（fixture 用 `/` 拼、store 返回平台分隔符）。 */
+function samePath(a: string, b: string): boolean {
+  return a.split('\\').join('/') === b.split('\\').join('/')
 }
 
 /** 提取某锚点分节的完整文本（标题行至下一锚点 H2 或文末）。 */
@@ -142,5 +147,72 @@ describe('CRLF 文档的修订（EOL 保持）', () => {
     expect(after).toContain('新正文')
     expect(after.replace(/\r\n/g, '').includes('\n')).toBe(false) // 无裸 \n（无混排）
     expect(after).toContain('- writtenAt: 2026-09-24T09:30:00+08:00\r\n') // meta 行字节不变
+  })
+})
+
+describe('同码跨市场共存（owner 2026-10-06：指数为关键判断载体；名称即身份）', () => {
+  /** 手工 fixture：同码两文档（000001 上证指数(沪) / 平安银行(深)），各含一张卡。 */
+  function seedCollision(root: string): { dir: string; indexFile: string; bankFile: string } {
+    const dir = reviewDir(root)
+    const mk = (name: string, anchor: string, body: string): string => [
+      '---',
+      'code: "000001"',
+      `name: "${name}"`,
+      'tradeDate: "2026-09-24"',
+      'subjective: true',
+      '---',
+      '',
+      `## 09:30 ^${anchor}`,
+      '- writtenAt: 2026-09-24T09:30:00+08:00',
+      '',
+      body,
+      '',
+    ].join('\n')
+    const indexFile = `${dir}/000001_上证指数_${TRADE_DATE_COMPACT}.md`
+    const bankFile = `${dir}/000001_平安银行_${TRADE_DATE_COMPACT}.md`
+    writeRaw(indexFile, mk('上证指数', 'card-20260924-000001-0930', '指数判断：关键位 3853（@预期）'))
+    writeRaw(bankFile, mk('平安银行', 'card-20260924-000001-0931', '银行板块观察'))
+    return { dir, indexFile, bankFile }
+  }
+
+  it('appendCard 名称段精确命中：写入对应文档、另一方字节不变、免多命中告警', async () => {
+    const root = makeTempRoot()
+    const { indexFile, bankFile } = seedCollision(root)
+    const bankBefore = readText(bankFile)
+    const r = await appendCard({ loc: { dataRoot: root, code: '000001', name: '上证指数', tradeDate: TRADE_DATE }, body: '上证指数：关键位观察', clientRequestId: 'c1', now: NOW_1432 })
+    expect(r.status).toBe('created')
+    expect(samePath(r.path, indexFile)).toBe(true)
+    expect(r.warnings).toEqual([]) // 名称即身份：唯一精确命中不告警
+    expect(readText(bankFile)).toBe(bankBefore)
+    expect(readText(indexFile)).toContain('上证指数：关键位观察')
+  })
+
+  it('updateCard/deleteCard 按锚点跨候选查找：只动锚点所属文档（不落到同码另一标的）', async () => {
+    const root = makeTempRoot()
+    const { indexFile, bankFile } = seedCollision(root)
+    const indexBefore = readText(indexFile)
+    // 平安银行那张卡（锚点在银行文档；文档选择不得因 mtime/序而落到指数文档）
+    const upd = await updateCard({ anchor: 'card-20260924-000001-0931', body: '银行板块观察（修订）', dataRoot: root })
+    expect(samePath(upd.path, bankFile)).toBe(true)
+    expect(readText(bankFile)).toContain('银行板块观察（修订）')
+    expect(readText(indexFile)).toBe(indexBefore)
+    const del = await deleteCard({ anchor: 'card-20260924-000001-0930', dataRoot: root })
+    expect(samePath(del.path, indexFile)).toBe(true)
+    expect(readText(indexFile)).not.toContain('关键位 3853')
+    expect(readText(bankFile)).toContain('银行板块观察（修订）')
+  })
+
+  it('locateDoc 名称段优先（名称变化仍回落 mtime 复用既有文档）', async () => {
+    const root = makeTempRoot()
+    const { indexFile, bankFile } = seedCollision(root)
+    const hitIndex = await locateDoc({ dataRoot: root, code: '000001', name: '上证指数', tradeDate: TRADE_DATE })
+    expect(samePath(hitIndex.path, indexFile)).toBe(true)
+    expect(hitIndex.warnings).toEqual([])
+    const hitBank = await locateDoc({ dataRoot: root, code: '000001', name: '平安银行', tradeDate: TRADE_DATE })
+    expect(samePath(hitBank.path, bankFile)).toBe(true)
+    // 名称未命中（如更名后）：回落 mtime 最新 + 多命中告警（既有语义保持）。
+    const renamed = await locateDoc({ dataRoot: root, code: '000001', name: '某新名', tradeDate: TRADE_DATE })
+    expect([indexFile, bankFile].some((f) => samePath(f, renamed.path))).toBe(true)
+    expect(renamed.warnings.length).toBeGreaterThan(0)
   })
 })

@@ -97,11 +97,16 @@ function parseUnknownFlow(raw: string): unknown {
  * 逐行解析 frontmatter 块体（不含 `---` 分隔行）为值视图。
  * 已知键按 schema 折型（`subjective` → boolean、`patterns` → string[]、
  * `drafts` → unknown）；其余键解码为标量字符串。**只读，不改文本**。
+ *
+ * 键名白名单（review-loop 兼容性放宽）：ASCII 键（卡片文档既有口径）之外再接受
+ * **CJK 键**——`DB/stock` 标的档案以中文键维护（`板块`/`当前题材`/`题材地位`/
+ * `热点标签`/`代码`/`角色`/`锚点` 等）。值级解码完全同款；既有 ASCII 键的解析
+ * 结果不变（放宽只增加可识别键，不改既有键语义）。
  */
 export function parseFrontmatterValues(lines: readonly string[]): FrontmatterValues {
   const values: FrontmatterValues = {}
   for (const line of lines) {
-    const m = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:(.*)$/.exec(line)
+    const m = /^([A-Za-z_\u3400-\u9fff][A-Za-z0-9_\-\u3400-\u9fff]*)\s*:(.*)$/.exec(line)
     if (m === null) continue
     const key = m[1]
     const raw = m[2].trim()

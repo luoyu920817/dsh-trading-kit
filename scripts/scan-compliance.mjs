@@ -5,8 +5,11 @@
  *   node scripts/scan-compliance.mjs <dataRoot>     # 扫描 <dataRoot>/DB/review 下全部 md（含月份子目录）
  *   node scripts/scan-compliance.mjs --self-test    # 临时目录造样本自测（断言命中数）
  *
- * 扫描对象：每份 md 中 `^ainote-` 分节（H2 标题行含 `^ainote-`，至下一 H2 或文件末尾）
- * 的正文——**只看 AI 附注**，不扫用户卡片（用户主观记录不受门禁约束）。
+ * 扫描对象：
+ * ① 每份 md 中 `^ainote-` 分节（H2 标题行含 `^ainote-`，至下一 H2 或文件末尾）的正文——
+ *    **只看 AI 附注**，不扫用户卡片（用户主观记录不受门禁约束）；
+ * ② review-loop 的当日盘面 md（`<YYYYMMDD>-summary.md`，kind=daily-brief）——扫 frontmatter
+ *    之后的全文（四段正文同样受负向词表与定位声明约束）。
  * 解析口径与迭代一契约 §2 一致：逐行、跳过 fenced code block（``` / ~~~ 围栏）。
  *
  * 检查项：
@@ -102,6 +105,35 @@ export function scanFileText(text, file) {
   return result
 }
 
+const BRIEF_FILE_RE = /^\d{8}-summary\.md$/
+
+/** 当日盘面 md：剥 frontmatter 后全文扫描（负向词 + 定位声明）。 */
+function scanBriefText(text, file) {
+  const lines = text.split(/\r?\n/)
+  let inFrontmatter = false
+  let frontmatterDone = false
+  const body = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!frontmatterDone && i === 0 && line.trim() === '---') { inFrontmatter = true; continue }
+    if (inFrontmatter) {
+      if (line.trim() === '---') { inFrontmatter = false; frontmatterDone = true }
+      continue
+    }
+    body.push({ line, lineNo: i + 1 })
+  }
+  const result = { file, kind: 'brief', ainoteCount: 0, hits: [], missingDeclaration: [] }
+  let hasDeclaration = false
+  for (const { line, lineNo } of body) {
+    if (line.includes(DECLARATION_LINE)) hasDeclaration = true
+    for (const word of NEGATIVE_WORDS) {
+      if (line.includes(word)) result.hits.push({ word, line: lineNo })
+    }
+  }
+  if (!hasDeclaration) result.missingDeclaration.push('(daily-brief)')
+  return result
+}
+
 function listMarkdownFiles(rootDir, out = []) {
   let entries
   try {
@@ -129,17 +161,19 @@ export function scanCompliance(dataRoot) {
     } catch {
       continue // 读取失败不阻塞其它文件
     }
-    results.push(scanFileText(text, file))
+    const baseName = file.split(sep).pop() ?? ''
+    results.push(BRIEF_FILE_RE.test(baseName) ? scanBriefText(text, file) : scanFileText(text, file))
   }
   const totalHits = results.reduce((sum, r) => sum + r.hits.length, 0)
   const totalMissingDeclaration = results.reduce((sum, r) => sum + r.missingDeclaration.length, 0)
   const ainoteCount = results.reduce((sum, r) => sum + r.ainoteCount, 0)
-  return { files: results, ainoteCount, totalHits, totalMissingDeclaration, pass: totalHits === 0 && totalMissingDeclaration === 0 }
+  const briefCount = results.filter((r) => r.kind === 'brief').length
+  return { files: results, ainoteCount, briefCount, totalHits, totalMissingDeclaration, pass: totalHits === 0 && totalMissingDeclaration === 0 }
 }
 
 function printReport(dataRoot, report) {
   console.log(`合规扫描：${join(dataRoot, 'DB', 'review')}（负向词表 ${NEGATIVE_WORDS.length} 词；判定标准 = 零命中）`)
-  console.log(`检查文档 ${report.files.length} 份，附注 ${report.ainoteCount} 条`)
+  console.log(`检查文档 ${report.files.length} 份，附注 ${report.ainoteCount} 条，当日盘面 md ${report.briefCount ?? 0} 份`)
   for (const r of report.files) {
     const hitText = r.hits.length === 0 ? '命中 0' : r.hits.map((h) => `${h.word}@行${h.line}`).join(', ')
     const declText = r.missingDeclaration.length === 0 ? '' : `；缺定位声明：${r.missingDeclaration.join(', ')}`
@@ -187,6 +221,43 @@ function cleanAinoteDoc(code, name) {
   ].join('\n')
 }
 
+function cleanBriefDoc() {
+  return [
+    '---',
+    'tradeDate: "2026-09-24"',
+    'generatedAt: "2026-09-24T17:35:00+08:00"',
+    'kind: "daily-brief"',
+    'anchors: ["999999"]',
+    'missing: []',
+    'warnings: []',
+    '---',
+    '',
+    '# 盘面整理 · 2026-09-24',
+    '',
+    '本文件由工作流生成，同交易日重跑整体覆盖（请勿手改，手改会被覆盖）。',
+    '',
+    '数据完整性：完整',
+    '',
+    DECLARATION_LINE,
+    '',
+    '## 一、指数',
+    '',
+    '上证指数 3949.91（来源：tq-local@2026-09-24）。',
+    '',
+    '## 二、情绪',
+    '',
+    '② 情绪：连板梯队断层（来源：卡片）。',
+    '',
+    '## 三、赚钱效应',
+    '',
+    '③ 赚钱效应：昨日涨停 +3.21%（来源：tq-local@2026-09-24）。',
+    '',
+    '## 四、题材',
+    '',
+    '③ 题材：地产链走强（来源：卡片）。',
+  ].join('\n')
+}
+
 function runSelfTest() {
   const failures = []
   const check = (label, actual, expected) => {
@@ -210,12 +281,16 @@ function runSelfTest() {
     writeFileSync(join(monthDir, '600003_缺声明_20260924.md'), cleanAinoteDoc('600003', '缺声明').replace(DECLARATION_LINE, '本节无声明行'), 'utf8')
     // 1 份用户卡片正文含负向词（附注之外 → 不计入命中）。
     writeFileSync(join(monthDir, '600004_卡片含词_20260924.md'), cleanAinoteDoc('600004', '卡片含词').replace('早盘观察（用户主观记录，不受扫描约束）：量能一般', '早盘观察：这票满仓干'), 'utf8')
+    // review-loop：1 份干净盘面 md + 1 份含负向词的盘面 md（扫 frontmatter 后全文）。
+    writeFileSync(join(monthDir, '20260924-summary.md'), cleanBriefDoc(), 'utf8')
+    writeFileSync(join(monthDir, '20260925-summary.md'), cleanBriefDoc().replace('③ 题材：地产链走强（来源：卡片）。', '③ 题材：地产链走强，建议买入。'), 'utf8')
     // 1 份附注围栏内含负向词（跳过围栏 → 不计入命中）。
     writeFileSync(join(monthDir, '600005_围栏含词_20260924.md'), cleanAinoteDoc('600005', '围栏含词').replace('③ 待跟踪：明日核对量能变化（不构成建议）。', '③ 引用示例：\n```\n必涨示例文本\n```\n（引用完）'), 'utf8')
 
     const report = scanCompliance(root)
     check('附注总数', report.ainoteCount, 9)
-    check('总命中数（仅附注正文、跳过围栏）', report.totalHits, 2)
+    check('盘面 md 数', report.briefCount, 2)
+    check('总命中数（附注正文 + 盘面 md，跳过围栏）', report.totalHits, 3)
     const hitDoc = report.files.find((f) => f.file.includes('600002'))
     check('命中文件命中数', hitDoc.hits.length, 2)
     check('命中词', hitDoc.hits.map((h) => h.word).sort(), ['建议买入', '目标价'])
@@ -223,6 +298,8 @@ function runSelfTest() {
     check('缺声明附注数', missingDoc.missingDeclaration.length, 1)
     check('卡片含词不计入（600004）', report.files.find((f) => f.file.includes('600004')).hits.length, 0)
     check('围栏含词不计入（600005）', report.files.find((f) => f.file.includes('600005')).hits.length, 0)
+    check('盘面 md 命中（20260925）', report.files.find((f) => f.file.includes('20260925-summary')).hits.map((h) => h.word), ['建议买入'])
+    check('盘面 md 干净（20260924）', report.files.find((f) => f.file.includes('20260924-summary')).hits.length, 0)
     check('判定', report.pass, false)
 
     // 全干净目录 → PASS。
@@ -233,8 +310,10 @@ function runSelfTest() {
       for (const code of cleanCodes) {
         writeFileSync(join(cleanMonth, `${code}_干净_20260924.md`), cleanAinoteDoc(code, '干净'), 'utf8')
       }
+      writeFileSync(join(cleanMonth, '20260924-summary.md'), cleanBriefDoc(), 'utf8')
       const cleanReport = scanCompliance(cleanRoot)
       check('干净目录命中数', cleanReport.totalHits, 0)
+      check('干净目录盘面 md 数', cleanReport.briefCount, 1)
       check('干净目录缺声明数', cleanReport.totalMissingDeclaration, 0)
       check('干净目录判定', cleanReport.pass, true)
       check('干净目录附注数（N≥5）', cleanReport.ainoteCount, 5)

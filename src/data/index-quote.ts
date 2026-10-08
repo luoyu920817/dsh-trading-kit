@@ -58,9 +58,11 @@ export async function fetchIndexQuote(deps: DataDeps, codeRaw: string): Promise<
   if (!/^\d{6}$/.test(codeRaw)) {
     return unavailable(['invalidCode'], `非法代码 '${codeRaw}'——期望 6 位数字`)
   }
-  // 通达信自制指标（880xxx）：外部无源，显式不可得、零出站（不发无谓请求）。
+  // 通达信自制指标（880xxx）：任何外部行情源均不覆盖；本地 vipdoc 日线缓存实测停更
+  // （2026-10-06：全部 day 文件最后 bar = 2026-06-17，属过时缓存不可采用）→ 显式
+  // 不可得、零出站，提示在通达信内查看行情。
   if (codeRaw.startsWith('88')) {
-    return unavailable(['noExternalSource'], '通达信自制指标——无外部行情源')
+    return unavailable(['noExternalSource'], '通达信自制指标无外部行情源（本地日线缓存实测停更不采用）——行情请在通达信内查看')
   }
   // 999999 = TDX 对上证指数的显示码；外部源的规范代码为 000001（沪）。
   const code = codeRaw === '999999' ? '000001' : codeRaw

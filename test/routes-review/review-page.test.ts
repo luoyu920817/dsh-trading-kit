@@ -64,16 +64,27 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('frontmatter-history')
     expect(REVIEW_HTML).toContain('T2-S8')
     expect(REVIEW_HTML).toContain('id="rv-limit"')
-    expect(REVIEW_HTML).toContain('涨停原因（点击展开）') // 默认收起可展开（owner 2026-10-05）
+    expect(REVIEW_HTML).toContain('涨停原因（点击') // 按归属日决定默认状态，仍可手动切换
     expect(REVIEW_HTML).toContain('id="rv-concepts"')
     // owner 2026-10-05：本地回读（保存/编辑/删除后）不清空 enrich 渲染内容（按标的归属保留）。
     expect(REVIEW_HTML).toContain('enrichRenderedFor !== currentCode')
     expect(REVIEW_HTML).toContain('enrichRenderedFor = currentCode')
-    // owner 2026-10-06：显式市场前缀 + 指数/锚点显式态（000688=科创50(沪)/国城矿业(深)）。
-    expect(REVIEW_HTML).toContain('id="rv-market-tag"')
-    expect(REVIEW_HTML).toContain('indexLike()')
+    // owner 2026-10-06：代码标识带市场前缀（chip 显示 sh000001 形态）+ 指数/锚点态。
+    expect(REVIEW_HTML).toContain('currentQualified()')
+    expect(REVIEW_HTML).toContain('inferMarket')
+    expect(REVIEW_HTML).not.toContain('id="rv-market-tag"') // 角标并入代码标识
+    expect(REVIEW_HTML).toContain('isIndexPage()')
     expect(REVIEW_HTML).toContain('p.market === currentMarket')
-    expect(REVIEW_HTML).toContain('复盘卡不适用')
+    // owner 2026-10-06 两轮裁决：指数/锚点同为「关键判断载体」——88*/999999/000xxx(沪)
+    // 一律可写卡（档案名 + 角色 chip 展示；不再有「不写卡」拦截）。
+    expect(REVIEW_HTML).toContain('isTdxAnchor()')
+    expect(REVIEW_HTML).toContain('renderAnchorRole')
+    expect(REVIEW_HTML).toContain('currentAnchor.name')
+    expect(REVIEW_HTML).not.toContain('不写复盘卡')
+    // owner 2026-10-06 追授「科创50 也需要适配」：指数态经 /api/index-quote（S10）显示真行情。
+    expect(REVIEW_HTML).toContain('loadIndexQuote')
+    expect(REVIEW_HTML).toContain("'/review/api/index-quote'")
+    expect(REVIEW_HTML).toContain('指数行情：不可用')
     // 行情四格（owner 2026-10-05：自参考页 同花顺涨跌停原因.html 迁移——S9 快照）。
     expect(REVIEW_HTML).toContain('id="rv-quote"')
     expect(REVIEW_HTML).toContain('id="rv-qp-price"')
@@ -165,12 +176,17 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('DSH 会话侧写卡')
   })
 
-  it('焦点顺序：B2 日期输入在 B3 输入框之前、B3 输入框在整理按钮之前（保存按钮已移除）', () => {
+  it('焦点顺序：B2 日期输入 → 整理按钮 → B3 输入框（整理按钮随交易日行——owner 2026-10-07）', () => {
     const dateAt = REVIEW_HTML.indexOf('id="rv-date"')
     const inputAt = REVIEW_HTML.indexOf('id="rv-input"')
     const organizeAt = REVIEW_HTML.indexOf('id="rv-organize"')
-    expect(dateAt).toBeLessThan(inputAt)
-    expect(inputAt).toBeLessThan(organizeAt)
+    expect(dateAt).toBeLessThan(organizeAt)
+    expect(organizeAt).toBeLessThan(inputAt)
+    // 归属断言：整理按钮在 B2 区块内（交易日行右侧），B3 内不再有它
+    const b2 = REVIEW_HTML.slice(REVIEW_HTML.indexOf('id="rv-b2"'), REVIEW_HTML.indexOf('id="rv-b3"'))
+    const b3 = REVIEW_HTML.slice(REVIEW_HTML.indexOf('id="rv-b3"'), REVIEW_HTML.indexOf('id="rv-b4"'))
+    expect(b2).toContain('id="rv-organize"')
+    expect(b3).not.toContain('id="rv-organize"')
   })
 
   it('窄视口 320px：无横向滚动的样式约束（box-sizing / overflow-wrap / 100% 宽）', () => {

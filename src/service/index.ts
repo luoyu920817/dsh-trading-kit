@@ -18,17 +18,20 @@ import type { Context } from '../context-types.ts'
 import type { ResolvedTraderKitConfig } from '../config.ts'
 import { createDataDeps, type DataDeps } from '../data/deps.ts'
 import { fetchQuoteName, fetchQuoteSnapshot, type QuoteSnapshotResult } from '../data/quote-name.ts'
+import { fetchIndexQuote, type IndexQuoteResult } from '../data/index-quote.ts'
 import { createDataHealth, type DataHealth, type DataHealthSnapshot } from '../data/health.ts'
 import { resolveTradeDate, type TradeDateResult } from '../data/trade-date.ts'
 import { getLimitReason, type LimitReasonResult } from '../data/limit-reason.ts'
 import { getConcepts, type ConceptsResult } from '../data/concepts.ts'
+import { getStockBasics, type MarketSuffix, type StockBasics } from '../data/tq-local.ts'
 import type { GuardStatus } from '../data/guard.ts'
 import { createTradeDateTool } from '../tools/trade-date.ts'
 import { createLimitReasonTool } from '../tools/limit-reason.ts'
 import { createConceptsTool } from '../tools/concepts.ts'
+import { createStockBasicsTool } from '../tools/stock-basics.ts'
 
 /** 数据面工具名（与 dsh.plugin.json#contributes.tools 一致）。 */
-export const DATA_TOOL_NAMES = ['get_trade_date', 'get_limit_reason', 'get_concepts'] as const
+export const DATA_TOOL_NAMES = ['get_trade_date', 'get_limit_reason', 'get_concepts', 'get_stock_basics'] as const
 
 /** 健康状态两段视图：data 段 = 本 change 探测结论；skill 段 = change 3 透传（未挂载为 null）。 */
 export interface TraderKitHealthStatus {
@@ -51,8 +54,12 @@ export interface TraderKitDataApi {
   getQuoteName(code: string): Promise<{ available: boolean; name: string | null; source: string | null; errors: string[]; fetchedAt: string | null }>
   /** 行情快照（同花顺 realhead；现价/涨跌幅/流通市值/总市值/流通股本——owner 2026-10-05「迁移四个基础数据」）。 */
   getQuoteSnapshot(code: string): Promise<QuoteSnapshotResult>
+  /** 指数行情（腾讯 S10；沪市指数/锚点态专用——owner 2026-10-06「科创50 也需要适配」）。 */
+  getIndexQuote(code: string): Promise<IndexQuoteResult>
   /** 频控状态只读快照（唯一预算出口：同一内存计数、不出站，design D-16）。 */
   guardStatus(): GuardStatus
+  /** TQ-Local 只读兜底（review-loop owner 裁决 2026-10-06：仅 get_stock_info 白名单）。 */
+  stockBasics(input: { code: string; marketSuffix?: MarketSuffix }): Promise<StockBasics>
 }
 
 /** `traderKit` service 形状（各 change 按装配点纪律增量填充）。 */
@@ -92,13 +99,18 @@ export function registerData(ctx: Context, config: ResolvedTraderKitConfig, over
     getConcepts: (input) => getConcepts(deps, input),
     getQuoteName: (code) => fetchQuoteName(deps, code),
     getQuoteSnapshot: (code) => fetchQuoteSnapshot(deps, code),
+    getIndexQuote: (code) => fetchIndexQuote(deps, code),
     guardStatus: () => deps.guard.status(),
+    // TQ-Local 只读兜底（review-loop）：开关经 config.sources.tqLocal.enabled；
+    // 出站经 deps.transport（测试可重定向到本地桩；生产 = 原生 fetch + http.ts 白名单闸）。
+    stockBasics: (input) => getStockBasics({ enabled: config.sources.tqLocal.enabled, transport: deps.transport, now: deps.now }, input),
   }
 
   const tools = [
     createTradeDateTool(dataApi),
     createLimitReasonTool(dataApi),
     createConceptsTool(dataApi),
+    createStockBasicsTool(dataApi),
   ]
   const disposers = tools.map((tool) => ctx.tools.register(tool))
   ctx.effect(() => () => { for (const dispose of disposers) dispose() }, 'dsh-trader-kit: data tools')

@@ -28,6 +28,7 @@ import type { GuardStatus } from '../data/guard.ts'
 import type { TradeDateResult } from '../data/trade-date.ts'
 import { normalizeCode } from '../review/anchor.ts'
 import * as reviewFormat from '../review/format.ts'
+import { readCardImages, type CardImage } from '../review/images.ts'
 import {
   mergeRunReport,
   readRunReport,
@@ -372,13 +373,20 @@ export interface DailyReadOutcome {
   tradeDate: string
   path: string
   /** 用户卡片集合（排除 `^ainote-` 分节）。 */
-  cards: Array<{ anchor: string; writtenAt: string; body: string }>
+  cards: Array<{ anchor: string; writtenAt: string; body: string; images?: CardImage[] }>
   /** 该文档既有附注条数（不计入卡片数口径）。 */
   ainoteCount: number
   warnings: string[]
 }
 
-/** 读该标的当日用户卡片（`review_read_daily` 的实现；代码入参经 normalizeCode）。 */
+/**
+ * 读该标的当日用户卡片与图片元数据。
+ * 业务逻辑: 定位并解析原文档，对各卡片补充图片路径与可用状态，合并告警。
+ * 关键判断: 无图片时保持原三字段卡片；附注不计入用户卡片。
+ * 异常处理: 文档不存在返回 found=false；缺图仅告警；其他读取错误上抛。
+ * 参数: facades 为真实存储与数据服务；input 为代码与目标交易日。
+ * 返回: 用户卡片、可选图片元数据、附注计数及告警。
+ */
 export async function runReadDaily(
   facades: ReviewDailyFacades,
   input: { code: string; tradeDate: string },
@@ -409,12 +417,18 @@ export async function runReadDaily(
   }
   const parsed = await parseDoc(located.path)
   warnings.push(...parsed.warnings)
+  const cards: DailyReadOutcome['cards'] = []
+  for (const c of parsed.cards) {
+    const { images, warnings: imageWarnings } = await readCardImages(dataRoot, located.path, c.body)
+    warnings.push(...imageWarnings)
+    cards.push({ anchor: c.anchor, writtenAt: c.writtenAt, body: c.body, ...(images.length > 0 ? { images } : {}) })
+  }
   return {
     found: true,
     code,
     tradeDate,
     path: located.path,
-    cards: parsed.cards.map((c) => ({ anchor: c.anchor, writtenAt: c.writtenAt, body: c.body })),
+    cards,
     ainoteCount: parsed.ainotes.length,
     warnings,
   }
@@ -817,13 +831,20 @@ function renderScanText(value: DailyScanOutcome): string {
   return lines.join('\n')
 }
 
-/** `review_read_daily` 工具定义。 */
+/**
+ * 定义用户卡片读取工具。
+ * 业务逻辑: 暴露卡片原文与可选图片元数据供 agent 读图。
+ * 关键判断: 图片字段可选，以兼容无图卡片。
+ * 异常处理: 执行异常由 runReadDaily 上抛给宿主。
+ * 参数: facades 为读取依赖。
+ * 返回: 带 JSON schema 与文本渲染的工具定义。
+ */
 export function createReviewReadDailyTool(facades: ReviewDailyFacades) {
   return defineTool({
     name: 'review_read_daily',
     description:
       '读取某标的当日文档的用户卡片集合（每日汇总 W3 取料；代码入参兼容 sh600000/600000.SH 形态，经 normalizeCode 归一）。'
-      + '返回锚点/writtenAt/正文，**排除 ^ainote- 附注分节**（卡片数口径 = 用户卡片数）；store 层 warnings 原样返回。'
+      + '返回锚点/writtenAt/正文及可选 images 图片绝对路径、MIME 与 available 状态，供宿主 read_image 读取；**排除 ^ainote- 附注分节**（卡片数口径 = 用户卡片数）；缺图与 store 层 warnings 返回。'
       + '依赖（change 4 locateDoc/parseDoc）不可用时显式报 DEPENDENCY_UNAVAILABLE。',
     parameters: {
       code: { type: 'string', description: '6 位股票代码（兼容 sh/sz/bj 前缀与 .SH/.SZ/.BJ 后缀，不补全不猜测）', required: true },
@@ -847,6 +868,19 @@ export function createReviewReadDailyTool(facades: ReviewDailyFacades) {
                 anchor: { type: 'string' },
                 writtenAt: { type: 'string' },
                 body: { type: 'string' },
+                images: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      relativePath: { type: 'string', required: true },
+                      path: { type: 'string', required: true },
+                      mimeType: { type: 'string', enum: ['', 'image/png', 'image/jpeg', 'image/webp', 'image/gif'], required: true },
+                      available: { type: 'boolean', required: true },
+                    },
+                  },
+                },
               },
             },
           },
@@ -863,11 +897,22 @@ export function createReviewReadDailyTool(facades: ReviewDailyFacades) {
   })
 }
 
+/**
+ * 渲染读取结果供 agent 消费。
+ * 业务逻辑: 按卡片列出原文、图片路径与可用状态，再展示告警。
+ * 关键判断: 文档缺失给出零卡提示；无图时保持原有文本。
+ * 异常处理: 不读取文件，直接呈现结构化结果中的告警。
+ * 参数: value 为当日文档读取结果。
+ * 返回: 可用于实际调用 read_image 的文本。
+ */
 function renderReadText(value: DailyReadOutcome): string {
   if (!value.found) return `该标的当日文档不存在：${value.code} @ ${value.tradeDate}（${value.path}）——该交易日无卡片或尚未创建。`
   const lines = [`用户卡片读取：${value.code} @ ${value.tradeDate}（附注 ${value.ainoteCount} 条不计入卡片数）`, value.path]
   for (const card of value.cards) {
     lines.push(`## ${card.anchor}（writtenAt=${card.writtenAt}）`, card.body)
+    for (const image of card.images ?? []) {
+      lines.push(`图片：${image.path}（relativePath=${image.relativePath}，mimeType=${image.mimeType}，available=${image.available}）`)
+    }
   }
   if (value.warnings.length > 0) lines.push(`warnings：${value.warnings.join('；')}`)
   return lines.join('\n')

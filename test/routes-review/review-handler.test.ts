@@ -9,7 +9,7 @@
  * 缓存头。「ctx.effect 注册/卸载与宿主 requestRejection 真实行为」为集成核对（6.1），
  * 在 review-registration.test.ts 以插件层结构断言承载。
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -825,5 +825,64 @@ describe('POST /review/api/organize（owner 2026-10-06 追授：整理意图登�
       headers: { 'x-write-key': 'test-write-key' },
     }))
     expect(badDate.status).toBe(400)
+  })
+})
+
+describe('GET /api/local：锚点领域档（owner 2026-10-06「领域归类」——DB/stock 锚点档案解析）', () => {
+  it('88 代码 → anchor 段命中（名称/角色来自 DB/stock 档案，代码索引）', async () => {
+    const root = makeTempRoot()
+    const dir = join(root, 'DB', 'stock')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '微盘股.md'), [
+      '---', '代码: "880823"', '板块:', '当前题材:', '题材地位:', '热点标签:',
+      '角色: "情绪周期"', '锚点: true', '---', '', '# 股性', '', '# 记录', '',
+    ].join('\n'), 'utf8')
+    const { deps } = makeDeps({ dataRoot: root })
+    const rec = await drive(createReviewHandler(deps), authedReq({ url: API_LOCAL + '?code=880823' }))
+    expect(rec.status).toBe(200)
+    const body = jsonBody<{ anchor: { isAnchor: boolean; name: string | null; role: string | null } | null }>(rec)
+    expect(body.anchor).not.toBeNull()
+    expect(body.anchor?.isAnchor).toBe(true)
+    expect(body.anchor?.name).toBe('微盘股')
+    expect(body.anchor?.role).toBe('情绪周期')
+  })
+
+  it('普通股票代码 → anchor=null（不触发档案扫描）', async () => {
+    const { deps } = makeDeps()
+    const rec = await drive(createReviewHandler(deps), authedReq({ url: API_LOCAL + '?code=600000' }))
+    const body = jsonBody<{ anchor: unknown }>(rec)
+    expect(body.anchor).toBeNull()
+  })
+})
+
+describe('写卡 market 字段（owner 2026-10-06「代码标识加沪深」）', () => {
+  it('显式 market=sh → 文件名带前缀（sh000001_…）；非法 market → 400 零落盘', async () => {
+    const root = makeTempRoot()
+    const { deps } = makeDeps({ dataRoot: root })
+    const handler = createReviewHandler(deps)
+    const ok = await drive(handler, authedReq({
+      url: API_CARD, method: 'POST',
+      body: JSON.stringify({ code: '000001', body: '上证指数判断', clientRequestId: 'mk-1', tradeDate: '2026-09-30', name: '上证指数', market: 'sh' }),
+    }))
+    expect(ok.status).toBe(200)
+    const body = jsonBody<{ path: string }>(ok)
+    expect(body.path.split('\\').join('/')).toContain('/sh000001_上证指数_20260930.md')
+    const bad = await drive(handler, authedReq({
+      url: API_CARD, method: 'POST',
+      body: JSON.stringify({ code: '000001', body: 'x', clientRequestId: 'mk-2', tradeDate: '2026-09-30', market: 'xx' }),
+    }))
+    expect(bad.status).toBe(400)
+    expect(jsonBody<{ error: string }>(bad).error).toBe('INVALID_MARKET')
+  })
+
+  it('缺省 market → 既有 6 位文件名（零迁移）', async () => {
+    const root = makeTempRoot()
+    const { deps } = makeDeps({ dataRoot: root })
+    const rec = await drive(createReviewHandler(deps), authedReq({
+      url: API_CARD, method: 'POST',
+      body: JSON.stringify({ code: '600000', body: '缺省市场', clientRequestId: 'mk-3', tradeDate: '2026-09-30' }),
+    }))
+    const body = jsonBody<{ path: string }>(rec)
+    expect(body.path.split('\\').join('/')).toContain('/600000_600000_20260930.md')
   })
 })

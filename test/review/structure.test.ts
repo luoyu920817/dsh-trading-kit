@@ -93,8 +93,8 @@ describe('tasks 1.14：warnings 字段名与编码唯一', () => {
   })
 })
 
-describe('tasks 1.12：全仓仅一处原子写/追加实现', () => {
-  it('rename 覆盖写仅出现在 src/review/store.ts（review 线边界内）', () => {
+describe('tasks 1.12：文档原子写唯一，附件事务独立', () => {
+  it('review 线的 rename 仅由文档存储和附件暂存模块执行', () => {
     const files = listFiles(REVIEW_DIR)
     expect(files.length).toBeGreaterThan(0)
     const renamers = files.filter((f) => {
@@ -104,6 +104,11 @@ describe('tasks 1.12：全仓仅一处原子写/追加实现', () => {
     expect(renamers.map((f) => f.replaceAll('\\', '/'))).toEqual(
       expect.arrayContaining([expect.stringContaining('src/review/store.ts')]),
     )
-    expect(renamers).toHaveLength(1)
+    expect(renamers.map((f) => f.replaceAll('\\', '/').split('/').pop()).sort()).toEqual(['images.ts', 'store.ts'])
+    const imagesSource = readFileSync(join(REVIEW_DIR, 'images.ts'), 'utf8')
+    expect(imagesSource).toContain('stageImageDeletes')
+    expect(imagesSource).toContain('settleImageDeletes')
+    expect(imagesSource).not.toContain('rename(tmp, absPath)')
+    expect(imagesSource).not.toContain('parseDocument(')
   })
 })

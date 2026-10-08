@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '../context-types.ts'
 import type { ResolvedTraderKitConfig } from '../config.ts'
 import { registerReviewDaily } from '../tools/review-daily.ts'
+import { registerReviewLoop } from '../tools/review-loop.ts'
 import { registerReviewRoutes } from '../routes/review.ts'
 import {
   appendAinote,
@@ -55,7 +56,7 @@ function attachReviewService(ctx: Context): void {
   api.review = reviewApi as unknown as Record<string, unknown>
 }
 
-/** 复盘线总装配：服务面 → 路由族（change 4）→ 每日汇总（change 5），顺序即依赖序。 */
+/** 复盘线总装配：服务面 → 路由族（change 4）→ 每日汇总（change 5）→ 闭环工具（review-loop），顺序即依赖序。 */
 export function registerReview(ctx: Context, config: ResolvedTraderKitConfig): void {
   attachReviewService(ctx)
   // 写接口密钥（owner 裁决 2026-10-05）：config.review.writeKey 设定值优先（固定 key，
@@ -63,4 +64,7 @@ export function registerReview(ctx: Context, config: ResolvedTraderKitConfig): v
   const writeKey = config.review.writeKey !== '' ? config.review.writeKey : randomBytes(24).toString('hex')
   registerReviewRoutes(ctx, { writeKey })
   registerReviewDaily(ctx)
+  // review-loop（stock-profile + daily-brief）：两工具 + service 出口
+  // `traderKit.review.{stockProfiles,writeBrief}`。
+  registerReviewLoop(ctx)
 }

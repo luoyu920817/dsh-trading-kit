@@ -40,6 +40,8 @@ export interface DataHealthSnapshot {
   totalTimeoutMs: number
   targets: Partial<Record<ProbeTarget, ProbeTargetStatus>>
   warnings: string[]
+  /** 能力开关状态（机器可读；review-loop 追加 `tqLocal`——TQ-Local 只读兜底是否启用）。 */
+  switches?: { tqLocal: boolean }
 }
 
 export interface DataHealth {
@@ -136,6 +138,7 @@ export function createDataHealth(config: ResolvedTraderKitConfig, options: DataH
       totalTimeoutMs: timeoutMs,
       targets: { ...targets },
       warnings: buildWarnings(),
+      switches: { tqLocal: config.sources.tqLocal.enabled },
     }
   }
 

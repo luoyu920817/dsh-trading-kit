@@ -25,11 +25,15 @@ const REQUIRED_SECTIONS = [
   '失败判定矩阵与重算指引',
   '预算预检与分批',
   '定位声明',
+  // review-loop 追加小节（缺一即失败）
+  '触发短语（面板与会话同文）',
+  'W6 盘面整理收尾',
+  '标的档案格式（数据格式化建议',
 ]
 
 /** 数据包 schema 必需字段（spec「数据包 schema」）。 */
 const REQUIRED_PACKAGE_FIELDS = [
-  'quote', 'limitReason', 'missing', 'source', 'fetchedAt', 'skillVersion', 'cacheReused',
+  'quote', 'limitReason', 'profile', 'missing', 'source', 'fetchedAt', 'skillVersion', 'cacheReused',
 ]
 
 function frontmatter(): Record<string, string> {
@@ -44,6 +48,14 @@ function frontmatter(): Record<string, string> {
 }
 
 describe('review-daily-summary skill（tasks 1.1/1.5/3.1）', () => {
+  it('W3 实际调用宿主 read_image 并对图片失败明确降级', () => {
+    const w3 = text.split('## W3 ')[1].split('## W4 ')[0]
+    expect(w3).toContain('read_image({file_path: image.path})')
+    for (const keyword of ['available', '去重', '工具隐藏', '模型无视觉', 'missing', 'warnings', '四态', 'MUST NOT 假称已读图']) {
+      expect(w3).toContain(keyword)
+    }
+    expect(text.split('## W4 ')[1]).toContain('图片')
+  })
   it('frontmatter 合法：name kebab-case、description 含触发时机、version 版本载体', () => {
     const fm = frontmatter()
     expect(fm.name).toBe('review-daily-summary')
@@ -88,5 +100,38 @@ describe('review-daily-summary skill（tasks 1.1/1.5/3.1）', () => {
   it('当日表现经 TQ skill、涨停原因经 T1 的取数来源描述', () => {
     expect(text.includes('tq-local')).toBe(true)
     expect(text.includes('get_limit_reason') || text.includes('T1')).toBe(true)
+  })
+
+  it('review-loop：触发短语固定且不带日期字面量（面板与会话同文）', () => {
+    expect(text).toContain('整理今日复盘：请按 review-daily-summary 工作流执行')
+    const line = text.split('\n').find((l) => l.includes('整理今日复盘：请按')) ?? ''
+    expect(line).not.toBe('')
+    expect(line).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    expect(line).not.toContain('${')
+    expect(text).toContain('MUST NOT 带日期字面量')
+  })
+
+  it('review-loop：W3 标的档案步（工具/注入面收窄/数据包字段）在案', () => {
+    expect(text).toContain('review_stock_profiles')
+    expect(text).toContain('锚点: true')
+    expect(text).toContain('MUST NOT')
+    expect(text).toMatch(/热点标签[\s\S]{0,40}MUST NOT[\s\S]{0,20}进入生成上下文/)
+  })
+
+  it('review-loop：W6 盘面 md（唯一生产者/覆盖重写/独立性/无卡片跳过）在案', () => {
+    expect(text).toContain('review_write_brief')
+    expect(text).toContain('覆盖重写')
+    expect(text).toContain('唯一生产者')
+    expect(text).toContain('跳过 W6')
+    expect(text).toContain('不改变')
+  })
+
+  it('review-loop：标的档案格式（角色/代码/锚点 + 8 个锚点清单）在案', () => {
+    for (const key of ['角色', '代码', '锚点']) {
+      expect(text.includes(key), `缺档案键: ${key}`).toBe(true)
+    }
+    for (const name of ['上证指数', '沪深300ETF', '科创50', '平均股价', '全A等权', '中证1000', '微盘股', '昨日涨停']) {
+      expect(text.includes(name), `锚点清单缺: ${name}`).toBe(true)
+    }
   })
 })
