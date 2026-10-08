@@ -33,7 +33,7 @@ import { ensureDir } from '../paths/fs.ts'
 import { resolveArea } from '../paths/resolve.ts'
 import { NAME_SEGMENT_MAX, sanitizeNameSegment } from '../paths/sanitize.ts'
 import { buildAnchor, CARD_ANCHOR_RE, normalizeCode } from './anchor.ts'
-import { qualifyCode } from './ident.ts'
+import { declaredMarketOf, marketPrefixForCode, qualifyCode, type MarketPrefix, type SecurityId } from './ident.ts'
 import { parseImageEmbeds } from './image-refs.ts'
 import { ReviewImageError, rollbackImageUploads, settleImageDeletes, stageImageDeletes, validateImageUploads, writeImageUploads, type ImageUpload } from './images.ts'
 import { anchorTimeToHeading, formatAnchorTime, formatZonedIso } from './format.ts'
@@ -165,12 +165,10 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 // 定位与扫描
 // ---------------------------------------------------------------------------
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 interface NormalizedLoc {
   code: string
+  /** 文件身份（owner 2026-10-08 P0：显式市场参与候选过滤；null = 旧式无前缀形态）。 */
+  id: SecurityId
   /** 带市场前缀的代码标识（`sh000001`）——文件名代码段与显示标识用（owner 2026-10-06）。 */
   qualified: string
   compact: string
@@ -180,23 +178,57 @@ interface NormalizedLoc {
   nameTruncated: boolean
 }
 
+/** 显式市场归一：仅接受 `sh|sz|bj`（缺省/其余 → null，由代码段推断兜底）。 */
+function explicitMarketOf(market: string | null | undefined): MarketPrefix | null {
+  return market === 'sh' || market === 'sz' || market === 'bj' ? market : null
+}
+
 function normalizeLoc(loc: Loc): NormalizedLoc {
-  const code = normalizeCode(loc.code)
+  const raw = loc.code.trim()
+  const code = normalizeCode(raw)
   if (code === null) {
     throw new Error(`非法标的编码 '${loc.code}'——期望 6 位数字（经 normalizeCode 归一：只去壳、不补全、不猜测）`)
   }
+  // 代码外壳携带的市场前缀（`sh000688`）在显式 market 缺省时视为显式市场——
+  // 「只去壳」不失信息：同码跨市场下 6 位代码不足以定位文档（P0）。
+  const marketFromShell = /^(sh|sz|bj)(?=.)/i.exec(raw)?.[1]?.toLowerCase() as MarketPrefix | undefined
+  const explicit = explicitMarketOf(loc.market) ?? marketFromShell ?? null
+  if (loc.market !== undefined && loc.market !== null && explicitMarketOf(loc.market) === null) {
+    throw new Error(`非法 market '${loc.market}'——期望 sh|sz|bj（缺省按代码段推断）`)
+  }
+  if (loc.market !== undefined && loc.market !== null && marketFromShell !== undefined
+    && explicitMarketOf(loc.market) !== marketFromShell) {
+    throw new Error(`市场冲突：loc.market='${loc.market}' 与代码前缀 '${marketFromShell}${code}' 不一致——请核对归属`)
+  }
   const compact = toCompactDate(loc.tradeDate)
   const sanitized = sanitizeNameSegment(loc.name ?? '', code)
-  return { code, qualified: qualifyCode(code, loc.market), compact, nameSegment: sanitized.value, nameTruncated: sanitized.nameTruncated }
+  return {
+    code,
+    id: { market: explicit, code },
+    qualified: qualifyCode(code, explicit),
+    compact,
+    nameSegment: sanitized.value,
+    nameTruncated: sanitized.nameTruncated,
+  }
 }
+
+/**
+ * 月目录文档文件名结构（整体匹配）：`[sh|sz|bj]<代码>_<名称>_<YYYYMMDD>.md`。
+ * 名称段贪心取**最后一个** `_<8位日期>` 之前的部分（名称本身可含下划线/数字）。
+ */
+const DOC_FILE_RE = /^(?:(sh|sz|bj))?(\d{6})_(.+)_(\d{8})\.md$/
 
 interface DocCandidate {
   path: string
   fileName: string
   mtimeMs: number
+  /** 文件身份（owner 2026-10-08 P0：市场前缀参与候选过滤；null = 旧式无前缀形态）。 */
+  id: SecurityId
+  /** 文件名名称段（`<名称>`）。 */
+  nameSegment: string
 }
 
-/** 扫描月目录：`<代码>_*_<YYYYMMDD>.md`（目录不存在 → 空数组）。 */
+/** 扫描月目录：同 (code, 日期) 的两种文件形态（带/不带市场前缀）；目录不存在 → 空数组。 */
 async function scanCandidates(areaDirAbs: string, code: string, compact: string): Promise<DocCandidate[]> {
   let entries: Dirent[]
   try {
@@ -205,13 +237,20 @@ async function scanCandidates(areaDirAbs: string, code: string, compact: string)
     if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
     throw e
   }
-  const re = new RegExp(`^(?:sh|sz|bj)?${escapeRe(code)}_.+_${escapeRe(compact)}\\.md$`)
   const out: DocCandidate[] = []
   for (const entry of entries) {
-    if (!entry.isFile() || !re.test(entry.name)) continue
+    if (!entry.isFile()) continue
+    const m = DOC_FILE_RE.exec(entry.name)
+    if (m === null || m[2] !== code || m[4] !== compact) continue
     const full = join(areaDirAbs, entry.name)
     const st = await stat(full)
-    out.push({ path: full, fileName: entry.name, mtimeMs: st.mtimeMs })
+    out.push({
+      path: full,
+      fileName: entry.name,
+      mtimeMs: st.mtimeMs,
+      id: { market: (m[1] ?? null) as MarketPrefix | null, code: m[2] },
+      nameSegment: m[3],
+    })
   }
   return out
 }
@@ -224,38 +263,59 @@ function sortDeterministic(candidates: DocCandidate[]): DocCandidate[] {
   })
 }
 
-/** 文件名名称段提取（`<代码>_<名称>_<YYYYMMDD>.md` 的 `<名称>`；不匹配 → null）。 */
-function fileNameNameSegment(fileName: string, code: string, compact: string): string | null {
-  const prefix = `${code}_`
-  const suffix = `_${compact}.md`
-  if (!fileName.startsWith(prefix) || !fileName.endsWith(suffix)) return null
-  return fileName.slice(prefix.length, fileName.length - suffix.length)
+interface PickTarget {
+  selected: DocCandidate | null
+  /** 名称段唯一精确命中（名称即身份，调用方据此免告警）。 */
+  byName: boolean
+  /** 实际参与选择的候选池（多命中告警范围 = 池，不含异市场文档）。 */
+  pool: DocCandidate[]
 }
 
 /**
- * 多命中确定性选择（owner 2026-10-06 修订）：① 名称段精确匹配优先（名称即身份——
- * 指数与同码深市股票各自共存）；② 名称未命中取 mtime 最新（更名/ST 复用既有文档）；
- * ③ 平局文件名字典序。`byName=true` 表示唯一精确命中（调用方据此免告警）。
+ * 多命中确定性选择（owner 2026-10-08 P0 修订——市场前缀参与候选过滤）：
+ *
+ * ① **market 精确过滤**：仅声明市场（显式前缀 ?? 按代码段推断）一致的候选参与
+ *    选择——`sh000688_科创50_*` 与 `000688_国城矿业_*` 是不同标的的文档，mtime
+ *    兜底 MUST NOT 跨市场误选；
+ * ② 池内**名称段精确匹配优先**（名称即身份——指数与同码股票各自共存）；
+ * ③ 名称未命中取 mtime 最新（更名/ST 复用既有文档）；平局文件名字典序。
+ *
+ * **legacy 兜底**：显式市场且精确市场无候选时，旧式无前缀文档可复用——但仅限
+ * 名称段命中（跨推断市场的 mtime 兜底会误写同码异市场文档）；名称未命中返回
+ * 空池（走新建前缀文档路径）。显式**异市场前缀**文档不属于 legacy，任何阶段
+ * 都不参与（前缀即身份断言）。
  */
-function selectCandidate(
-  candidates: DocCandidate[],
-  code: string,
-  compact: string,
-  requestedNameSegment: string | null,
-): { selected: DocCandidate; byName: boolean } {
-  if (requestedNameSegment !== null && requestedNameSegment !== '') {
-    const named = candidates.filter((c) => fileNameNameSegment(c.fileName, code, compact) === requestedNameSegment)
-    if (named.length === 1) return { selected: named[0], byName: true }
+function selectCandidate(input: {
+  candidates: DocCandidate[]
+  declared: MarketPrefix
+  explicitMarket: boolean
+  nameSegment: string | null
+}): PickTarget {
+  const { candidates, declared, explicitMarket, nameSegment } = input
+  const exact = candidates.filter((c) => declaredMarketOf(c.id) === declared)
+  if (exact.length === 0 && explicitMarket) {
+    if (nameSegment === null) return { selected: null, byName: false, pool: [] }
+    const legacy = candidates.filter((c) => c.id.market === null)
+    const named = legacy.filter((c) => c.nameSegment === nameSegment)
+    if (named.length === 0) return { selected: null, byName: false, pool: [] }
+    if (named.length === 1) return { selected: named[0], byName: true, pool: named }
+    return { selected: sortDeterministic(named)[0], byName: false, pool: named }
   }
-  return { selected: sortDeterministic(candidates)[0], byName: false }
+  if (nameSegment !== null) {
+    const named = exact.filter((c) => c.nameSegment === nameSegment)
+    if (named.length === 1) return { selected: named[0], byName: true, pool: named }
+    if (named.length > 1) return { selected: sortDeterministic(named)[0], byName: false, pool: named }
+  }
+  if (exact.length === 0) return { selected: null, byName: false, pool: [] }
+  return { selected: sortDeterministic(exact)[0], byName: false, pool: exact }
 }
 
-function multiHitWarning(selected: DocCandidate, all: DocCandidate[]): StoreWarning {
+function multiHitWarning(selected: { path: string }, all: ReadonlyArray<{ path: string }>): StoreWarning {
   const others = all.filter((c) => c.path !== selected.path).map((c) => c.path)
   return {
     kind: 'multiHit',
     path: selected.path,
-    detail: `同 (code, tradeDate) 命中 ${all.length} 份文档，已确定性选一（mtime 最新，平局文件名字典序），其余未改动`,
+    detail: `同 (code, tradeDate) 命中 ${all.length} 份同市场文档，已确定性选一（名称未命中时 mtime 最新、平局文件名字典序），其余未改动`,
     candidates: others,
   }
 }
@@ -263,18 +323,26 @@ function multiHitWarning(selected: DocCandidate, all: DocCandidate[]): StoreWarn
 /**
  * 定位文档（契约 §3 `locateDoc`）：存在则返回被选中的既有文档路径（多命中
  * 显式告警）；不存在则返回按当前名称段解析的创建路径（`nameTruncated` 透传）。
- * 本函数不做任何写操作。
+ * 选择序 = market 精确过滤 → 名称段 → mtime（owner 2026-10-08 P0，见
+ * selectCandidate）；本函数不做任何写操作。
  */
 export async function locateDoc(loc: Loc): Promise<Result<{ path: string }>> {
-  const { code, qualified, compact, nameSegment } = normalizeLoc(loc)
+  const { code, id, qualified, compact, nameSegment } = normalizeLoc(loc)
   const resolved = resolveArea(loc.dataRoot, 'review', { code: qualified, name: loc.name ?? '', date: compact })
   const warnings: string[] = []
   const candidates = await scanCandidates(resolved.areaDirAbs, code, compact)
   if (candidates.length > 0) {
     const nameSeg = nameSegment !== code ? nameSegment : null
-    const { selected, byName } = selectCandidate(candidates, code, compact, nameSeg)
-    if (candidates.length > 1 && !byName) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
-    return { path: selected.path, warnings }
+    const pick = selectCandidate({
+      candidates,
+      declared: declaredMarketOf(id),
+      explicitMarket: id.market !== null,
+      nameSegment: nameSeg,
+    })
+    if (pick.selected !== null) {
+      if (pick.pool.length > 1 && !pick.byName) warnings.push(encodeStoreWarning(multiHitWarning(pick.selected, pick.pool)))
+      return { path: pick.selected.path, warnings }
+    }
   }
   if (resolved.nameTruncated) {
     warnings.push(encodeStoreWarning({
@@ -571,7 +639,9 @@ function assertOwnership(
  * 返回: 创建、重复或跳过状态，锚点、路径及告警。
  */
 async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
-  const { code, qualified, compact, nameSegment, nameTruncated } = normalizeLoc(input.loc)
+  const { code, id, qualified, compact, nameSegment, nameTruncated } = normalizeLoc(input.loc)
+  const declared = declaredMarketOf(id)
+  const explicitMarket = id.market !== null
   const resolved = resolveArea(input.loc.dataRoot, 'review', { code: qualified, name: input.loc.name ?? '', date: compact }, { forWrite: true })
   const absPath = resolved.absPath
   const hooks = activeHooks
@@ -586,6 +656,8 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
   }
 
   // 互斥键：月目录 + code + 日期（与「按绝对路径互斥」等价且更强，见模块头）。
+  // 故意不带市场：显式市场的 legacy 兜底与无前缀写入可能引向同一份旧式文档，
+  // 按 (code, 日期) 互斥保证这类跨身份写同一文件的路径仍然串行。
   const lockKey = `${resolved.areaDirAbs}::${code}_${compact}`
   return withLock(lockKey, async () => {
     let lastFailure: { kind: 'mismatch' } | { kind: 'fs'; message: string } | null = null
@@ -606,9 +678,11 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
         continue
       }
       const nameSeg2 = nameSegment !== code ? nameSegment : null
-      const picked = candidates.length > 0 ? selectCandidate(candidates, code, compact, nameSeg2) : null
-      const selected = picked?.selected ?? null
-      if (selected !== null && candidates.length > 1 && picked?.byName !== true) warnings.push(encodeStoreWarning(multiHitWarning(selected, candidates)))
+      const pick = candidates.length > 0
+        ? selectCandidate({ candidates, declared, explicitMarket, nameSegment: nameSeg2 })
+        : { selected: null as DocCandidate | null, byName: false, pool: [] as DocCandidate[] }
+      const selected = pick.selected
+      if (selected !== null && pick.pool.length > 1 && !pick.byName) warnings.push(encodeStoreWarning(multiHitWarning(selected, pick.pool)))
       const targetPath = selected?.path ?? absPath
 
       // -- re-read
@@ -814,7 +888,20 @@ function parseCardAnchor(anchor: string): { compact: string; code: string } {
   return { compact: m[1], code: m[2] }
 }
 
-/** 修改主流程。业务逻辑: 同锁定位、复核、图片暂存与文档原子提交。关键判断: 单图删除只移除真实嵌入并保留空卡片。异常处理: 文档失败恢复原图并回收新图。参数: anchor/root/mode/body/images/relativePath。返回: 状态、锚点、路径、告警。 */
+/**
+ * 锚点查找候选序（owner 2026-10-08 P0）：声明市场一致（阶段①）在前、显式市场时
+ * 旧式无前缀文档（阶段② legacy）殿后；显式**异市场前缀**文档不参与（前缀即身份
+ * 断言——`sh000688` 的锚点 MUST NOT 落到 `sz000688_*` 文档）。各池内确定性排序。
+ */
+function orderedAnchorCandidates(candidates: DocCandidate[], declared: MarketPrefix, explicitMarket: boolean): DocCandidate[] {
+  const exact = sortDeterministic(candidates.filter((c) => declaredMarketOf(c.id) === declared))
+  const legacy = explicitMarket
+    ? sortDeterministic(candidates.filter((c) => c.id.market === null && declaredMarketOf(c.id) !== declared))
+    : []
+  return [...exact, ...legacy]
+}
+
+/** 修改主流程。业务逻辑: 同锁定位、复核、图片暂存与文档原子提交。关键判断: 单图删除只移除真实嵌入并保留空卡片。异常处理: 文档失败恢复原图并回收新图。参数: anchor/root/mode/body/images/relativePath/market。返回: 状态、锚点、路径、告警。 */
 async function transformDailyDoc(input: {
   anchor: string
   dataRoot: string
@@ -822,8 +909,15 @@ async function transformDailyDoc(input: {
   body?: string
   images?: ImageUpload[]
   relativePath?: string
+  /** 显式市场（owner 2026-10-08 P0）：同码跨市场时锚点查找按身份序定位文档。 */
+  market?: string
 }): Promise<{ status: 'updated' | 'deleted'; anchor: string; path: string; warnings: string[] }> {
   const { compact, code } = parseCardAnchor(input.anchor)
+  const explicit = explicitMarketOf(input.market)
+  if (input.market !== undefined && input.market !== null && input.market !== '' && explicit === null) {
+    throw new Error(`非法 market '${input.market}'——期望 sh|sz|bj（缺省按代码段推断）`)
+  }
+  const declared = declaredMarketOf({ market: explicit, code })
   const resolved = resolveArea(input.dataRoot, 'review', { code, name: '', date: compact }, { forWrite: true })
   const hooks = activeHooks
   const retryDelays = hooks.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
@@ -851,10 +945,12 @@ async function transformDailyDoc(input: {
       if (candidates.length === 0) throw notFound('该 (代码, 交易日) 不存在文档')
       const warnings: string[] = []
       // owner 2026-10-06：同码跨市场文档共存（000001 指数/股票）——锚点只存在于其中
-      // 一份，按确定性序**逐候选查找含该锚点的文档**（MUST NOT 先选一份再查找，否则
-      // 编辑/删除可能落到同码另一标的的文档）。多命中且非名称唯一命中时保留告警。
-      const ordered = sortDeterministic(candidates)
+      // 一份，按身份序（market 精确 → legacy，owner 2026-10-08 P0）**逐候选查找含该
+      // 锚点的文档**（MUST NOT 先选一份再查找，否则编辑/删除可能落到同码另一标的
+      // 的文档）。查找池超过一份时保留告警。
+      const ordered = orderedAnchorCandidates(candidates, declared, explicit !== null)
       let targetPath: string | null = null
+      let found: DocCandidate | null = null
       let text: string | null = null
       let bom = false
       let section: ParsedSection | null = null
@@ -874,6 +970,7 @@ async function transformDailyDoc(input: {
         const candidateSection = candidateParse.sections.find((sec) => sec.kind === 'card' && sec.anchor === input.anchor)
         if (candidateSection !== undefined) {
           targetPath = candidate.path
+          found = candidate
           text = candidateText
           bom = candidateBom
           section = candidateSection
@@ -882,11 +979,11 @@ async function transformDailyDoc(input: {
           break
         }
       }
-      if (targetPath === null || section === null || text === null || parse === null) {
-        throw notFound('所有同码文档中均不存在该卡片锚点')
+      if (targetPath === null || section === null || text === null || parse === null || found === null) {
+        throw notFound('所有同码候选文档（market 精确 → legacy 序）中均不存在该卡片锚点')
       }
-      if (candidates.length > 1) {
-        warnings.push(encodeStoreWarning(multiHitWarning({ path: targetPath, fileName: targetPath.split(/[\/]/).pop() ?? '', mtimeMs: 0 }, candidates)))
+      if (ordered.length > 1) {
+        warnings.push(encodeStoreWarning(multiHitWarning(found, ordered)))
       }
 
       // -- 快照 + 复核（同追加纪律；以命中锚点的文档为对象）
@@ -982,31 +1079,35 @@ async function transformDailyDoc(input: {
   })
 }
 
-/** 修订卡片。业务逻辑: 替换正文、提交附件及回收移除引用。关键判断: 保留锚点meta。异常处理: 空正文拒绝，图片错误透传。参数: anchor/body/root/images。返回: 更新状态与告警。 */
+/** 修订卡片。业务逻辑: 替换正文、提交附件及回收移除引用。关键判断: 保留锚点meta。异常处理: 空正文拒绝，图片错误透传。参数: anchor/body/root/images/market。返回: 更新状态与告警。 */
 export async function updateCard(input: {
   anchor: string
   body: string
   dataRoot: string
   images?: ImageUpload[]
+  /** 显式市场（owner 2026-10-08 P0）：同码跨市场时锚点查找按身份序定位文档。 */
+  market?: string
 }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
   if (typeof input.body !== 'string' || input.body.trim() === '') {
     throw new Error('updateCard: 卡片正文为空——删除请用 deleteCard 通道（MUST NOT 以空正文冒充删除）')
   }
-  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body, images: validateImageUploads(input.images, input.body) })
+  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body, images: validateImageUploads(input.images, input.body), market: input.market })
   return { status: 'updated' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 删除卡片。业务逻辑: 移除分节并清理附件。关键判断: 其他分节保真。异常处理: 失败恢复附件。参数: anchor/root。返回: 删除状态及告警。 */
+/** 删除卡片。业务逻辑: 移除分节并清理附件。关键判断: 其他分节保真。异常处理: 失败恢复附件。参数: anchor/root/market。返回: 删除状态及告警。 */
 export async function deleteCard(input: {
   anchor: string
   dataRoot: string
+  /** 显式市场（owner 2026-10-08 P0）：同 updateCard。 */
+  market?: string
 }): Promise<Result<{ status: 'deleted'; anchor: string; path: string }>> {
-  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'delete' })
+  const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'delete', market: input.market })
   return { status: 'deleted' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 删除卡片图片。业务逻辑: 精准移除同路径嵌入并删除文件。关键判断: 最后图删除仍保留空卡片。异常处理: 未引用抛404，事务失败恢复。参数: anchor/root/relativePath。返回: 更新状态及告警。 */
-export async function deleteCardImage(input: { anchor: string; dataRoot: string; relativePath: string }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
+/** 删除卡片图片。业务逻辑: 精准移除同路径嵌入并删除文件。关键判断: 最后图删除仍保留空卡片。异常处理: 未引用抛404，事务失败恢复。参数: anchor/root/relativePath/market。返回: 更新状态及告警。 */
+export async function deleteCardImage(input: { anchor: string; dataRoot: string; relativePath: string; market?: string }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
   const outcome = await transformDailyDoc({ ...input, mode: 'delete-image' })
   return { ...outcome, status: 'updated' }
 }
@@ -1020,7 +1121,9 @@ export async function deleteCardImage(input: { anchor: string; dataRoot: string;
  *
  * 扫描范围：`DB/review/` 全部月度子目录——基目录由 `resolveArea` 输出经
  * `path.dirname` 派生（不自行拼接模板；月目录本身必经 resolveArea 折算）。
- * 同一 code 多命中按 mtime 最新/文件名字典序确定性取一并告警。
+ * 同一**声明市场身份**（前缀 ?? 代码段推断；owner 2026-10-08 P0——legacy 无前缀
+ * 与同市场前缀文档同组、跨市场前缀分列）多命中按 mtime 最新/文件名字典序确定性
+ * 取一并告警。
  * `dataRoot` 缺省时显式报错（service 出口由装配点绑定，见 src/review/index.ts）。
  */
 export async function scanDailyCardTargets(
@@ -1088,7 +1191,7 @@ export async function scanDailyCardTargets(
         mtimeMs: st.mtimeMs,
         fileName: f.name,
       }
-      const groupKey = (target.qualifier ?? '') + target.code
+      const groupKey = (target.qualifier ?? marketPrefixForCode(target.code)) + target.code
       const list = byCode.get(groupKey) ?? []
       list.push(target)
       byCode.set(groupKey, list)
@@ -1096,7 +1199,13 @@ export async function scanDailyCardTargets(
   }
 
   const out = Object.assign([] as Array<{ code: string; name: string; path: string; cardCount: number; hasAinote: boolean }>, { warnings })
-  for (const [code, list] of [...byCode.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  // 排序：代码优先（既有输出序），同代码内按声明市场（groupKey = 市场 + 代码）。
+  for (const [key, list] of [...byCode.entries()].sort((a, b) => {
+    const codeA = a[0].slice(2)
+    const codeB = b[0].slice(2)
+    if (codeA !== codeB) return codeA < codeB ? -1 : 1
+    return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0
+  })) {
     const winner: Target = list.length === 1
       ? list[0]
       : [...list].sort((a, b) => (a.mtimeMs !== b.mtimeMs ? b.mtimeMs - a.mtimeMs : a.fileName < b.fileName ? -1 : 1))[0]

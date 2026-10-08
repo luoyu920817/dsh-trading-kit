@@ -48,3 +48,28 @@ export function splitQualified(value: string): QualifiedCode | null {
   if (m === null) return null
   return { market: m[1] === undefined ? null : (m[1] as MarketPrefix), code: m[2] }
 }
+
+/**
+ * 标的身份领域类型（owner 2026-10-08 P0「同代码跨市场」裁决：定位不再修字符串
+ * 规则，以领域类型承载身份——市场前缀参与候选过滤，杜绝同码异市场文档互串）。
+ * `market = null` = 旧式无前缀形态（既有文档零迁移），声明市场按代码段推导。
+ *
+ * **有意不含 assetType**：资产类型（股票/指数/ETF）在文件名与 frontmatter 中
+ * 均无判别字段、不可验证；`(market, code)` 二元组已是文档定位的完整身份
+ * （指数态与同码股票由市场前缀区分，如 `sh000688` 科创50 vs `000688`/`sz000688`
+ * 国城矿业）。待存在持久化判别字段（如 frontmatter 资产类型键）再扩展。
+ */
+export interface SecurityId {
+  /** 文件名市场前缀（`sh|sz|bj`）；null = 旧式无前缀文档。 */
+  market: MarketPrefix | null
+  /** 6 位数字代码。 */
+  code: string
+}
+
+/**
+ * 声明市场：显式前缀优先，否则按代码段推断（推断口径与 `marketPrefixForCode`
+ * 一致，**仅参与文件定位**——显示与取数决策各有其道，MUST NOT 越界）。
+ */
+export function declaredMarketOf(id: SecurityId): MarketPrefix {
+  return id.market ?? marketPrefixForCode(id.code)
+}

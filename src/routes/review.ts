@@ -43,6 +43,7 @@ import { dirname, join } from 'node:path'
 import type { Context, TraderKitHttpRequest, TraderKitHttpResponse, TraderKitWebRoute } from '../context-types.ts'
 import { REVIEW_HTML, REVIEW_STATE_PLACEHOLDER } from '../client/review/index.html.ts'
 import { CARD_ANCHOR_RE, normalizeCode } from '../review/anchor.ts'
+import { marketPrefixForCode } from '../review/ident.ts'
 import { createNameResolver, createTradeDateResolver, type ResolveTradeDateFn, type TradeDateResolver } from '../review/context.ts'
 import {
   BACKTRACK_LIMIT_DEFAULT,
@@ -166,6 +167,8 @@ export interface ReviewDayTarget {
   path: string
   cardCount: number
   hasAinote: boolean
+  /** 文件名市场前缀（`sh|sz|bj`；旧式无前缀文档缺省——owner 2026-10-08 P0 透传）。 */
+  qualifier?: string
 }
 
 export type ReviewRouteHandler = (req: TraderKitHttpRequest, res: TraderKitHttpResponse) => Promise<void>
@@ -187,8 +190,8 @@ export interface ReviewHandlerDeps {
     warnings: string[]
   }>
   /** 卡片修订/删除（owner 2026-10-05 追授；未注入 → 对应接口显式 501）。 */
-  updateCard?(input: { anchor: string; body: string; dataRoot: string; images?: ImageUpload[] }): Promise<{ status: 'updated'; anchor: string; path: string; warnings: string[] }>
-  deleteCard?(input: { anchor: string; dataRoot: string }): Promise<{ status: 'deleted'; anchor: string; path: string; warnings: string[] }>
+  updateCard?(input: { anchor: string; body: string; dataRoot: string; images?: ImageUpload[]; market?: string }): Promise<{ status: 'updated'; anchor: string; path: string; warnings: string[] }>
+  deleteCard?(input: { anchor: string; dataRoot: string; market?: string }): Promise<{ status: 'deleted'; anchor: string; path: string; warnings: string[] }>
   /** 图片删除与文档修订复用同一存储锁；未注入时显式返回 501。 */
   deleteCardImage?: typeof deleteCardImage
   /** 指数行情（S10 腾讯源；指数态专用——owner 2026-10-06 追授。未注入 → 501 显式）。 */
@@ -345,8 +348,13 @@ function isSafeDirectSegment(raw: string): boolean {
 // 有卡日期月桶扫描（/api/local 的 cardedDates 与 /api/dates 共用；纯本地）
 // ---------------------------------------------------------------------------
 
-/** 扫 DB/review/<YYYYMM>/ 月桶中该代码的全部文档日（canonical 降序；目录缺失 = 空表）。 */
-async function scanCardedDates(dataRoot: string, code: string): Promise<string[]> {
+/**
+ * 扫 DB/review/<YYYYMM>/ 月桶中该代码的全部文档日（canonical 降序；目录缺失 = 空表）。
+ * 声明市场过滤（owner 2026-10-08 P0）：显式 `market` 时仅取该市场文档；缺省时排除
+ * 显式**异市场**前缀文档（`sh000688_*` 不属于 `#000688` 深市股票页），旧式无前缀
+ * 与同市场前缀文档均计入。
+ */
+async function scanCardedDates(dataRoot: string, code: string, market?: 'sh' | 'sz' | 'bj'): Promise<string[]> {
   if (dataRoot === '') return []
   // 月桶探针：以占位日期取得月目录（校验照走白名单），dirname 派生 DB/review 基目录
   //（与 store/context 的既有做法一致，不自行拼接模板）。
@@ -359,7 +367,8 @@ async function scanCardedDates(dataRoot: string, code: string): Promise<string[]
     if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
     throw e
   }
-  const re = new RegExp(`^(?:sh|sz|bj)?${code}_.+_(\\d{8})\\.md$`)
+  const re = new RegExp(`^((?:sh|sz|bj)?)${code}_.+_(\\d{8})\\.md$`)
+  const inferred = marketPrefixForCode(code)
   const found = new Set<string>()
   for (const month of months) {
     if (!month.isDirectory()) continue
@@ -372,7 +381,9 @@ async function scanCardedDates(dataRoot: string, code: string): Promise<string[]
     for (const name of names) {
       const m = re.exec(name)
       if (m === null) continue
-      const iso = toCanonicalDateParam(m[1])
+      const declared = m[1] === '' ? inferred : m[1]
+      if (market !== undefined ? declared !== market : (m[1] !== '' && m[1] !== inferred)) continue
+      const iso = toCanonicalDateParam(m[2])
       if (iso !== null) found.add(iso)
     }
   }
@@ -530,6 +541,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         return
       }
     }
+    // 显式市场（owner 2026-10-08 P0）：参与文档定位的市场精确过滤（sh000688 指数 vs 000688 同码股票）。
+    const marketError = marketParamError(query.market)
+    if (marketError !== null) {
+      writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+      return
+    }
+    const market = marketParamOf(query.market)
     if (deps.dataRoot === '') {
       writeJson(res, 200, {
         code,
@@ -579,7 +597,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       }
     }
     if (date !== null) {
-      const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code, tradeDate: date })
+      const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code, tradeDate: date, ...(market === undefined ? {} : { market }) })
       warnings.push(...located.warnings)
       locatedPath = located.path
       try {
@@ -601,7 +619,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         cards = enriched
       }
     }
-    const cardedDates = await scanCardedDates(deps.dataRoot, code)
+    const cardedDates = await scanCardedDates(deps.dataRoot, code, market)
     const name = await deps.resolveLocalName(code)
     writeJson(res, 200, {
       code,
@@ -634,9 +652,15 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     const code = normalizeCode(codeRaw)
     if (code === null) {
       const invalid = invalidCodeBody(codeRaw)
-      writeJsonError(res, 400, invalid.error, invalid.message, { codeRaw })
+      writeJsonError(res, 400, 'INVALID_CODE', invalid.message, { codeRaw })
       return
     }
+    const marketError = marketParamError(query.market)
+    if (marketError !== null) {
+      writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+      return
+    }
+    const market = marketParamOf(query.market)
     if (deps.dataRoot === '') {
       writeJson(res, 200, {
         code,
@@ -646,7 +670,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       })
       return
     }
-    const dates = await scanCardedDates(deps.dataRoot, code)
+    const dates = await scanCardedDates(deps.dataRoot, code, market)
     writeJson(res, 200, { code, dates, warnings: [] })
   }
 
@@ -938,6 +962,22 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     return null
   }
 
+  /** 显式市场参数校验（owner 2026-10-08 P0）：缺省/空合法（按代码段推断）；其余必须 sh|sz|bj。 */
+  function marketParamError(value: unknown): string | null {
+    if (value === undefined || value === null || value === '') return null
+    if (typeof value !== 'string') return `非法 market '${String(value)}'——期望 sh|sz|bj（缺省按代码段推断）`
+    const v = value.trim().toLowerCase()
+    if (v === 'sh' || v === 'sz' || v === 'bj') return null
+    return `非法 market '${value}'——期望 sh|sz|bj（缺省按代码段推断）`
+  }
+
+  /** market 参数取值（校验通过后调用；大小写不敏感，缺省 undefined）。 */
+  function marketParamOf(value: unknown): 'sh' | 'sz' | 'bj' | undefined {
+    if (typeof value !== 'string') return undefined
+    const v = value.trim().toLowerCase()
+    return v === 'sh' || v === 'sz' || v === 'bj' ? v : undefined
+  }
+
   /**
    * 修订卡片正文及图片。
    * 业务逻辑: 校验锚点、非空正文与可选附件，存储层同步清理移除图片。
@@ -970,7 +1010,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     }
     const images = validateImageUploads(body.images, cardBody)
     try {
-      const result = await deps.updateCard({ anchor, body: cardBody, dataRoot: deps.dataRoot, ...(body.images === undefined ? {} : { images }) })
+      const marketError = marketParamError(body.market)
+      if (marketError !== null) {
+        writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+        return
+      }
+      const market = marketParamOf(body.market)
+      const result = await deps.updateCard({ anchor, body: cardBody, dataRoot: deps.dataRoot, ...(body.images === undefined ? {} : { images }), ...(market === undefined ? {} : { market }) })
       writeJson(res, 200, { status: 'updated', anchor: result.anchor, path: result.path, warnings: result.warnings })
     } catch (e) {
       if (e instanceof AnchorNotFoundError) {
@@ -999,8 +1045,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       return
     }
     const anchor = (body.anchor as string).trim()
+    const marketError = marketParamError(body.market)
+    if (marketError !== null) {
+      writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+      return
+    }
+    const market = marketParamOf(body.market)
     try {
-      const result = await deps.deleteCard({ anchor, dataRoot: deps.dataRoot })
+      const result = await deps.deleteCard({ anchor, dataRoot: deps.dataRoot, ...(market === undefined ? {} : { market }) })
       writeJson(res, 200, { status: 'deleted', anchor: result.anchor, path: result.path, warnings: result.warnings })
     } catch (e) {
       if (e instanceof AnchorNotFoundError) {
@@ -1035,8 +1087,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       writeJsonError(res, 400, 'INVALID_TRADE_DATE', '图片读取须提供有效 tradeDate')
       return
     }
+    const marketError = marketParamError(query.market)
+    if (marketError !== null) {
+      writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+      return
+    }
+    const market = marketParamOf(query.market)
     const relativePath = query.relativePath ?? ''
-    const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code: query.code, tradeDate })
+    const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code: query.code, tradeDate, ...(market === undefined ? {} : { market }) })
     const image = await readImageFile(deps.dataRoot, located.path, relativePath)
     res.writeHead(200, { 'Content-Type': image.mimeType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
     res.end(image.data)
@@ -1066,7 +1124,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       writeJsonError(res, 400, 'INVALID_IMAGE_PATH', '图片删除须提供 relativePath')
       return
     }
-    const result = await deps.deleteCardImage({ anchor: (body.anchor as string).trim(), relativePath: body.relativePath, dataRoot: deps.dataRoot })
+    const marketError = marketParamError(body.market)
+    if (marketError !== null) {
+      writeJsonError(res, 400, 'INVALID_MARKET', marketError)
+      return
+    }
+    const market = marketParamOf(body.market)
+    const result = await deps.deleteCardImage({ anchor: (body.anchor as string).trim(), relativePath: body.relativePath, dataRoot: deps.dataRoot, ...(market === undefined ? {} : { market }) })
     writeJson(res, 200, result)
   }
 
@@ -1112,7 +1176,15 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     if (tradeDate !== null) {
       if (deps.scanDailyCardTargets !== undefined) {
         const listed = await deps.scanDailyCardTargets(tradeDate)
-        targets = listed.map((t) => ({ code: t.code, name: t.name, path: t.path, cardCount: t.cardCount, hasAinote: t.hasAinote }))
+        // qualifier 透传（owner 2026-10-08 P0）：同码跨市场条目（sh000688 vs 000688）供面板区分显示。
+        targets = listed.map((t) => ({
+          code: t.code,
+          name: t.name,
+          path: t.path,
+          cardCount: t.cardCount,
+          hasAinote: t.hasAinote,
+          ...(t.qualifier === undefined ? {} : { qualifier: t.qualifier }),
+        }))
         warnings.push(...(listed.warnings ?? []))
       } else {
         warnings.push('scanDailyCardTargets 未接线（当日清单不可得）')

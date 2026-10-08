@@ -32,6 +32,8 @@ interface DayTarget {
   name: string
   cardCount: number
   hasAinote: boolean
+  /** 文件名市场前缀（`sh|sz|bj`；旧式无前缀文档缺省——owner 2026-10-08 P0 透传）。 */
+  qualifier?: string
 }
 
 interface RunReportView {
@@ -140,8 +142,8 @@ export function ReviewPanel(props: PanelProps): ReactElement {
     h('div', { key: 'targets', style: box },
       h('div', { style: { fontWeight: 600, marginBottom: '6px' } },
         '当日标的（' + String(state?.targets.length ?? 0) + '）'),
-      ...(state?.targets ?? []).map((t) => h('div', { key: t.code, style: muted },
-        t.code + ' ' + t.name + '｜卡片 ' + String(t.cardCount) + '｜附注 ' + (t.hasAinote ? '有' : '无'))),
+      ...(state?.targets ?? []).map((t) => h('div', { key: t.code + (t.qualifier ?? ''), style: muted },
+        (t.qualifier ?? '') + t.code + ' ' + t.name + '｜卡片 ' + String(t.cardCount) + '｜附注 ' + (t.hasAinote ? '有' : '无'))),
       state !== null && state.targets.length === 0
         ? h('div', { style: muted }, '当日无卡片')
         : null,

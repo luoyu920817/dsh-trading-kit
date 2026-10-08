@@ -380,16 +380,30 @@ export interface DailyReadOutcome {
 }
 
 /**
+ * 显式市场入参归一（owner 2026-10-08 P0）：`market` 入参优先，其次代码前缀
+ * （`sh000688` 的壳携带市场——normalizeCode 去壳不失信息）；非法显式报错。
+ * 同码跨市场（sh000688 科创50 vs 000688 国城矿业）下 6 位代码不足以定位文档。
+ */
+function resolveMarketInput(inputMarket: unknown, rawCode: string): string | undefined {
+  const fromParam = typeof inputMarket === 'string' && inputMarket.trim() !== '' ? inputMarket.trim().toLowerCase() : undefined
+  if (fromParam !== undefined && fromParam !== 'sh' && fromParam !== 'sz' && fromParam !== 'bj') {
+    paramError(`非法 market '${String(inputMarket)}'——期望 sh|sz|bj（缺省按代码段推断）`)
+  }
+  const fromCode = /^(sh|sz|bj)(?=\d{6}$)/i.exec(rawCode.trim())?.[1]?.toLowerCase()
+  return fromParam ?? fromCode
+}
+
+/**
  * 读该标的当日用户卡片与图片元数据。
  * 业务逻辑: 定位并解析原文档，对各卡片补充图片路径与可用状态，合并告警。
  * 关键判断: 无图片时保持原三字段卡片；附注不计入用户卡片。
  * 异常处理: 文档不存在返回 found=false；缺图仅告警；其他读取错误上抛。
- * 参数: facades 为真实存储与数据服务；input 为代码与目标交易日。
+ * 参数: facades 为真实存储与数据服务；input 为代码、目标交易日与可选显式市场。
  * 返回: 用户卡片、可选图片元数据、附注计数及告警。
  */
 export async function runReadDaily(
   facades: ReviewDailyFacades,
-  input: { code: string; tradeDate: string },
+  input: { code: string; tradeDate: string; market?: string },
 ): Promise<DailyReadOutcome> {
   const rawCode = typeof input.code === 'string' ? input.code : ''
   const code = normalizeCode(rawCode)
@@ -398,12 +412,13 @@ export async function runReadDaily(
   }
   const tradeDate = normalizeToIsoDate(typeof input.tradeDate === 'string' ? input.tradeDate.trim() : '')
   if (tradeDate === null) {
-    paramError(`非法交易日 '${input.tradeDate}'——期望 canonical YYYY-MM-DD（兼容 8 位 YYYYMMDD，归一必须经 src/data/date.ts）`)
+    paramError(`非法交易日 '${input.tradeDate}'——期望 canonical YYYY-MM-DD（兼容 8 位 YYYYMMDD，归一必须经 src/data/date.ts，MUST NOT 猜测）`)
   }
+  const market = resolveMarketInput(input.market, rawCode)
   const locateDoc = requireReview(facades, 'locateDoc')
   const parseDoc = requireReview(facades, 'parseDoc')
   const dataRoot = facades.data?.dataRoot ?? ''
-  const located = await locateDoc({ dataRoot, code, tradeDate })
+  const located = await locateDoc({ dataRoot, code, tradeDate, ...(market === undefined ? {} : { market }) })
   const warnings = [...located.warnings]
 
   let docStat = null
@@ -481,6 +496,8 @@ export async function runAppendAinote(
     generatedAt?: string
     dataSources?: string[]
     name?: string
+    /** 显式市场（owner 2026-10-08 P0）：同码跨市场时参与文档定位的市场精确过滤。 */
+    market?: string
     now?: Date
   },
 ): Promise<DailyAppendOutcome> {
@@ -529,9 +546,10 @@ export async function runAppendAinote(
 
   // tradeDate/code 元信息行由工具补写（与 frontmatter/锚点同源，消除 agent 抄写漂移）。
   const composedBody = `- tradeDate: ${tradeDate}\n- code: ${code}\n${input.body.replace(/^\r?\n+/, '')}`
+  const market = resolveMarketInput(input.market, rawCode)
   const appendAinote = requireReview(facades, 'appendAinote')
   const result = await appendAinote({
-    loc: { dataRoot: facades.data?.dataRoot ?? '', code, name: input.name, tradeDate },
+    loc: { dataRoot: facades.data?.dataRoot ?? '', code, name: input.name, tradeDate, ...(market === undefined ? {} : { market }) },
     body: composedBody,
     generatedAt,
     dataSources,
@@ -780,6 +798,7 @@ export function createReviewDailyScanTool(facades: ReviewDailyFacades) {
                 path: { type: 'string' },
                 cardCount: { type: 'number' },
                 hasAinote: { type: 'boolean' },
+                qualifier: { type: 'string' },
               },
             },
           },
@@ -818,7 +837,8 @@ function renderScanText(value: DailyScanOutcome): string {
   const lines = [`每日汇总扫描：state=${value.state} tradeDate=${value.tradeDate ?? 'null'}`]
   lines.push(value.message)
   for (const t of value.targets) {
-    lines.push(`- ${t.code} ${t.name}｜卡片数=${t.cardCount}（不含附注）｜已有附注=${t.hasAinote ? '是' : '否'}｜${t.path}`)
+    // 市场前缀随条目透出（owner 2026-10-08 P0）：同码跨市场时按 qualified 代码调用 read/append。
+    lines.push(`- ${(t as { qualifier?: string }).qualifier ?? ''}${t.code} ${t.name}｜卡片数=${t.cardCount}（不含附注）｜已有附注=${t.hasAinote ? '是' : '否'}｜${t.path}`)
   }
   if (value.budget !== null) {
     lines.push(
@@ -844,11 +864,13 @@ export function createReviewReadDailyTool(facades: ReviewDailyFacades) {
     name: 'review_read_daily',
     description:
       '读取某标的当日文档的用户卡片集合（每日汇总 W3 取料；代码入参兼容 sh600000/600000.SH 形态，经 normalizeCode 归一）。'
+      + '同码跨市场（如 sh000688 科创50 vs 000688 国城矿业）MUST 传 market 或使用带市场前缀的代码（owner 2026-10-08 P0）。'
       + '返回锚点/writtenAt/正文及可选 images 图片绝对路径、MIME 与 available 状态，供宿主 read_image 读取；**排除 ^ainote- 附注分节**（卡片数口径 = 用户卡片数）；缺图与 store 层 warnings 返回。'
       + '依赖（change 4 locateDoc/parseDoc）不可用时显式报 DEPENDENCY_UNAVAILABLE。',
     parameters: {
       code: { type: 'string', description: '6 位股票代码（兼容 sh/sz/bj 前缀与 .SH/.SZ/.BJ 后缀，不补全不猜测）', required: true },
       tradeDate: { type: 'string', description: '目标交易日，canonical YYYY-MM-DD（兼容 8 位 YYYYMMDD）', required: true },
+      market: { type: 'string', description: '可选：显式市场 sh|sz|bj（同码跨市场时必传；代码带前缀时可省略）' },
     },
     output: {
       schema: {
@@ -925,6 +947,7 @@ export function createReviewAppendAinoteTool(facades: ReviewDailyFacades) {
     description:
       '向某标的当日文档追加 AI 附注（每日汇总 W5；**只追加、幂等、原子写**——同一交易日同一标的重复运行返回 skipped，绝不改写用户卡片分节）。'
       + '写入经 change 4 appendAinote 同一实现，写前归属硬校验（frontmatter tradeDate+code == 目标 loc）不符即报 DOC_MISMATCH。'
+      + '同码跨市场（如 sh000688 科创50 vs 000688 国城矿业）MUST 传 market 或使用带市场前缀的代码（owner 2026-10-08 P0）。'
       + 'body 须以「- missing: …」「- cacheReused: …」元信息行开头并含「数据完整性」「研究辅助、不构成投资建议」固定行'
       + '（tradeDate/code 两行由工具按入参自动补写，generatedAt 缺省按写入时刻产出，东八偏移）。'
       + '如需重算：删除该附注分节后重跑；本工具无 force/overwrite/refresh 入参。依赖不可用时显式报 DEPENDENCY_UNAVAILABLE、不产出任何文件。',
@@ -935,6 +958,7 @@ export function createReviewAppendAinoteTool(facades: ReviewDailyFacades) {
       generatedAt: { type: 'string', description: '可选：ISO8601 东八偏移（formatZonedIso 产出形态）；缺省按写入时刻产出' },
       dataSources: { type: 'array', items: { type: 'string' }, description: '逐字段数据来源（字段=源@YYYY-MM-DD），如 quote.close=tq-local@2026-09-24' },
       name: { type: 'string', description: '可选：标的名称（新建文档时的名称段；既有文档按代码+日期定位）' },
+      market: { type: 'string', description: '可选：显式市场 sh|sz|bj（同码跨市场时必传，如 sh000688 科创50；代码带前缀时可省略）' },
     },
     output: {
       schema: {

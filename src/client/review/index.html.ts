@@ -545,6 +545,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   // ── B4 卡片动作（owner 2026-10-05 追授：编辑 = 行内 textarea 保存经 /api/card/update；
   // 删除 = 两段确认后经 /api/card/delete；锚点文本不再展示——数据文件与复制引用保留）──
   function postCardApi(pathSuffix, payload, done) {
+    if (currentMarket !== null) payload.market = currentMarket; // 显式市场参与锚点定位（owner 2026-10-08 P0）
     fetch(basePath + '/review/api/card' + pathSuffix, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-write-key': (window.__REVIEW__ && window.__REVIEW__.writeKey) || '' },
@@ -612,7 +613,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
           var img = document.createElement('img');
           img.className = 'review-image';
           img.alt = ref.relativePath;
-          img.src = (!card && item.url) || basePath + '/review/api/card/image?code=' + encodeURIComponent(code) + '&tradeDate=' + encodeURIComponent(date) + '&relativePath=' + encodeURIComponent(ref.relativePath);
+          // market 随当前上下文携带（owner 2026-10-08 P0）：同码跨市场文档定位以显式市场过滤。
+          img.src = (!card && item.url) || basePath + '/review/api/card/image?code=' + encodeURIComponent(code) + '&tradeDate=' + encodeURIComponent(date) + (currentMarket !== null ? '&market=' + encodeURIComponent(currentMarket) : '') + '&relativePath=' + encodeURIComponent(ref.relativePath);
           img.addEventListener('click', function (ev) { showImageOriginal(ev.currentTarget.src); });
           img.addEventListener('error', function (ev) { var el = ev.currentTarget; el.parentNode.replaceChild(document.createTextNode('[图片不可用：' + el.alt + ']'), el); });
           group.appendChild(img);
@@ -938,7 +940,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     // 载体」——一律走正常本地流（卡片可写/可读/可编辑），行情经 S10、enrich 跳过。
     currentAnchor = null; // 复位（锚点/指数档案名由下方响应重建）
     if (!silent) setMode('loading');
-    fetchJson(apiUrl('/review/api/local', { code: currentCode, date: currentDate })).then(function (r) {
+    fetchJson(apiUrl('/review/api/local', { code: currentCode, date: currentDate, market: currentMarket })).then(function (r) {
       if (r.status !== 200) {
         if (!silent) setMode('error', '本地段加载失败：HTTP ' + r.status + ' ' + describeError(r.body));
         return;

@@ -156,6 +156,13 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('if (writable && card.anchor)') // 只读降级不渲染动作
   })
 
+  it('显式市场随读/写/修订通道携带（owner 2026-10-08 P0：同码跨市场文档定位）', () => {
+    expect(REVIEW_HTML).toContain("apiUrl('/review/api/local', { code: currentCode, date: currentDate, market: currentMarket })") // 本地段读取
+    expect(REVIEW_HTML).toContain("payload.market = currentMarket; // 显式市场（URL 前缀）优先于推断") // 写卡
+    expect(REVIEW_HTML).toContain('payload.market = currentMarket; // 显式市场参与锚点定位') // 卡片动作（update/delete/image-delete）
+    expect(REVIEW_HTML).toContain("'&market=' + encodeURIComponent(currentMarket)") // 图片读取 URL
+  })
+
   it('交互态五态布点 + clientRequestId 幂等复用 + 联动保护 draftOwnerCode/pendingOwner', () => {
     for (const state of ["'idle'", "'loading'", "'submitting'", "'error'", "'empty'"]) {
       expect(REVIEW_HTML).toContain(state)

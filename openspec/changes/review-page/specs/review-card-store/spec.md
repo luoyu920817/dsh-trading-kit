@@ -2,7 +2,7 @@
 
 ### Requirement: 存储路径与文件粒度
 
-卡片 SHALL 落于 `<数据根>/DB/review/<YYYYMM>/<代码>_<名称>_<YYYYMMDD>.md`（数据根解析与目录自动创建遵循 change 2 的 `data-root-layout`；文件名模板由该映射表的 `resolveArea` 持有，调用方 MUST NOT 自行拼接，见 `iteration-1-contracts §6`）。**一个标的 × 一个交易日 SHALL 对应一个 md 文档**；同标的同日的多张卡片 MUST 共处同一文档，MUST NOT 每卡一个文件。文档定位 SHALL 以「代码 + 日期」为准（扫描当日目录匹配 `<代码>_*_<YYYYMMDD>.md` 与带市场前缀的 `<sh|sz|bj><代码>_*_<YYYYMMDD>.md` 两种形态）。**代码标识（owner 2026-10-06 追授「整体添加代码标识添加一个沪深」）**：显式市场（URL 前缀 `#!!xxxxxx` 的替换结果 / 写卡 `payload.market`）时文件名代码段 SHALL 带 `sh|sz|bj` 前缀（指数/锚点族与同码股票由前缀天然区分，如 `sh000001_上证指数_*` vs `000001_平安银行_*`）；缺省保持 6 位（既有文档零迁移）。路径白名单 `resolveArea` 的 code 参数 SHALL 接受可选前缀形态。：已存在文档时 MUST 复用，MUST NOT 因名称变化（更名/ST 等）新建第二个文档；多命中时 SHALL 按「多命中文档的确定性选择」Requirement 处理。
+卡片 SHALL 落于 `<数据根>/DB/review/<YYYYMM>/<代码>_<名称>_<YYYYMMDD>.md`（数据根解析与目录自动创建遵循 change 2 的 `data-root-layout`；文件名模板由该映射表的 `resolveArea` 持有，调用方 MUST NOT 自行拼接，见 `iteration-1-contracts §6`）。**一个标的 × 一个交易日 SHALL 对应一个 md 文档**；同标的同日的多张卡片 MUST 共处同一文档，MUST NOT 每卡一个文件。文档定位 SHALL 以「代码 + 日期」为准（扫描当日目录匹配 `<代码>_*_<YYYYMMDD>.md` 与带市场前缀的 `<sh|sz|bj><代码>_*_<YYYYMMDD>.md` 两种形态）。**代码标识（owner 2026-10-06 追授「整体添加代码标识添加一个沪深」）**：显式市场（URL 前缀 `#!!xxxxxx` 的替换结果 / 写卡 `payload.market`）时文件名代码段 SHALL 带 `sh|sz|bj` 前缀（指数/锚点族与同码股票由前缀天然区分，如 `sh000001_上证指数_*` vs `000001_平安银行_*`）；缺省保持 6 位（既有文档零迁移）。路径白名单 `resolveArea` 的 code 参数 SHALL 接受可选前缀形态。**文档身份与市场过滤（owner 2026-10-08 P0「同代码跨市场」裁决——定位不再修字符串规则，以领域身份 `SecurityId { market, code }` 承载）**：候选文档 SHALL 携带解析出的身份（市场前缀 + 代码 + 名称段），并按「声明市场一致」（显式前缀 ?? 按代码段推断）先做精确过滤（选择序详见「多命中文档的确定性选择」）；读/写/修订/删除全通道 SHALL 显式携带市场（URL 前缀 / `payload.market` / 工具 `market` 入参 / 代码自带前缀壳 `sh000688`），市场信息缺失时按代码段推断兜底。已存在文档时 MUST 复用，MUST NOT 因名称变化（更名/ST 等）新建第二个文档；多命中时 SHALL 按「多命中文档的确定性选择」Requirement 处理。
 
 #### Scenario: 首次落卡片
 
@@ -244,15 +244,15 @@ appendCard(input: { loc: Loc; body: string; now?: Date; clientRequestId?: string
 appendAinote(input: { loc: Loc; body: string; generatedAt: string; dataSources: string[]; now?: Date }):
   Promise<Result<{ status: 'created' | 'skipped'; anchor: string; path: string }>>
 scanDailyCardTargets(tradeDate: string):
-  Promise<Result<Array<{ code: string; name: string; path: string; cardCount: number; hasAinote: boolean }>>>
+  Promise<Result<Array<{ code: string; name: string; path: string; cardCount: number; hasAinote: boolean; qualifier?: string }>>>
 ```
 
 **修订/删除扩展（owner 2026-10-05 追授，签名追加于五导出之外）**：
 
 ```ts
-updateCard(input: { anchor: string; body: string; dataRoot: string }):   // anchor: '^card-' 去前缀形态
+updateCard(input: { anchor: string; body: string; dataRoot: string; market?: string }):   // anchor: '^card-' 去前缀形态；market: 显式市场（owner 2026-10-08 P0，同码跨市场锚点定位）
   Promise<Result<{ status: 'updated'; anchor: string; path: string }>>
-deleteCard(input: { anchor: string; dataRoot: string }):
+deleteCard(input: { anchor: string; dataRoot: string; market?: string }):
   Promise<Result<{ status: 'deleted'; anchor: string; path: string }>>
 ```
 
@@ -269,7 +269,7 @@ change 5 的 `cards` 元素 `{anchor, writtenAt, body}` 是本 `Card` 的子集�
 
 **写前归属硬校验（`§3`）**：`appendCard` / `appendAinote` MUST 校验「目标文档 frontmatter 的 `tradeDate` + `code`」== 入参 `loc`；不一致 → 抛**显式错误 `DOC_MISMATCH`**（错误体含两侧 `code` 与 `tradeDate`），MUST NOT 追加、MUST NOT 静默改用其它文档（多命中选一不得被当作「换一份文档写」）。
 
-service key：`traderKit.review.{locateDoc,parseDoc,appendCard,appendAinote,scanDailyCardTargets}`；工具出口 `review_daily_scan` / `review_read_daily` / `review_append_ainote`（change 5）与 `appendAinote` **同一实现**（不得第二份追加逻辑）。幂等键：附注 = `(tradeDate, code)` + 前缀扫描；卡片 = `clientRequestId`。
+service key：`traderKit.review.{locateDoc,parseDoc,appendCard,appendAinote,scanDailyCardTargets}`；工具出口 `review_daily_scan` / `review_read_daily` / `review_append_ainote`（change 5）与 `appendAinote` **同一实现**（不得第二份追加逻辑）。幂等键：附注 = `(tradeDate, code)` + 前缀扫描；卡片 = `clientRequestId`。**显式市场入参（owner 2026-10-08 P0）**：`review_read_daily` / `review_append_ainote` SHALL 接受可选 `market`（`sh|sz|bj`）且代码入参的 `sh|sz|bj` 前缀壳 SHALL 视为显式市场——同码跨市场（`sh000688` 科创50 vs `000688` 国城矿业）下 6 位代码不足以定位文档；`review_daily_scan` 清单元素 SHALL 透出文件名市场前缀 `qualifier` 供逐标的调用方回传。
 
 #### Scenario: change 5 复用同一实现
 
@@ -335,7 +335,22 @@ formatAnchorTime(date: Date): string  // 'HHmm'（锚点时间段；分节标题
 
 ### Requirement: 多命中文档的确定性选择
 
-同一 `(code, tradeDate)` 命中多份文档时，选择 SHALL 确定、按序判定：**① 名称段精确匹配优先**（`loc.name` 经净化后的名称段与候选文件名的 `<名称>` 段相等——owner 2026-10-06 裁决：指数（如 000001 上证指数）与同码深市股票（如 000001 平安银行）是**不同标的、各自共存的文档**，指数为「指数/情绪/赚钱效应」关键判断的载体必须可写卡）；② 名称未命中（含 `loc.name` 缺省/名称变化）时取 `mtime` 最新（保持更名/ST 复用既有文档的既有语义）；③ 平局按文件名字典序（code unit 序）。**名称段精确命中且唯一时视为名称即身份，MUST NOT 告警**；其余多命中 SHALL 通过 `warnings: string[]` 返回（含被选路径与其它候选路径），MUST NOT 静默任选、MUST NOT 自动合并或删除候选文档。
+同一 `(code, tradeDate)` 命中多份文档时，选择 SHALL 确定、按序判定：**① market 精确过滤**（owner 2026-10-08 P0「同代码跨市场」裁决：仅**声明市场**（文件名显式前缀 ?? 按代码段推断）一致的候选参与选择——指数 `sh000688_科创50_*` 与同码深市股票 `000688_国城矿业_*` 是**不同标的、各自共存的文档**，mtime 兜底 MUST NOT 跨市场误选；显式**异市场**前缀文档任何阶段 MUST NOT 参与）；**② 名称段精确匹配优先**（`loc.name` 经净化后的名称段与候选文件名的 `<名称>` 段相等——owner 2026-10-06 裁决：指数与同码股票各自共存的文档，指数为「指数/情绪/赚钱效应」关键判断的载体必须可写卡）；**③ 名称未命中**（含 `loc.name` 缺省/名称变化）**时取 `mtime` 最新**（保持更名/ST 复用既有文档的既有语义）；**④ 平局按文件名字典序**（code unit 序）。**legacy 兜底**：显式市场且①无候选时，旧式无前缀文档 SHALL 允许**名称段命中**复用（既有文档零迁移——如 legacy `000688_科创50_*` 被 `#sh000688` 复用）；名称未命中 MUST NOT 以 mtime 兜底落入旧式文档（跨推断市场互串即 P0 缺陷本体），SHALL 走新建前缀文档路径。**名称段精确命中且唯一时视为名称即身份，MUST NOT 告警**；其余多命中 SHALL 通过 `warnings: string[]` 返回（含被选路径与其它候选路径，告警范围 = 实际参与选择的同市场候选池），MUST NOT 静默任选、MUST NOT 自动合并或删除候选文档。**锚点修订/删除**（updateCard/deleteCard/deleteCardImage，可选 `market` 入参）SHALL 按同一身份序（market 精确 → legacy）**逐候选查找含该锚点的文档**，显式异市场前缀文档不参与。
+
+#### Scenario: market 精确过滤优先于 mtime（P0 回归——sh000688 vs 000688）
+
+- **WHEN** 当日目录同时存在 `sh000688_科创50_20260924.md` 与 `000688_国城矿业_20260924.md`（后者 mtime 更新），写入方 `market='sh'` + `loc.name='科创50'`
+- **THEN** 写入 `sh000688_科创50_20260924.md`（零告警）；`000688_国城矿业_20260924.md` 字节不变；反向（`market='sz'`/缺省 + `loc.name='国城矿业'`）同理——缺省（无显式市场）时 sh 前缀文档不参与选择
+
+#### Scenario: legacy 无前缀文档名称命中复用（既有文档零迁移）
+
+- **WHEN** 显式 `market='sh'` 且当日仅存旧式无前缀文档 `000688_科创50_20260924.md`，`loc.name='科创50'`
+- **THEN** 复用该 legacy 文档（名称即身份），MUST NOT 新建第二份
+
+#### Scenario: legacy 名称不命中 → 新建前缀文档（MUST NOT 落入同码异市场文档）
+
+- **WHEN** 显式 `market='sh'` 且当日仅存 `000688_国城矿业_20260924.md`，`loc.name='科创50'`
+- **THEN** 新建 `sh000688_科创50_<YYYYMMDD>.md`；`000688_国城矿业_20260924.md` 字节不变（mtime 兜底被市场过滤阻断）
 
 #### Scenario: 名称段精确匹配优先（同码跨市场共存）
 
@@ -356,6 +371,11 @@ formatAnchorTime(date: Date): string  // 'HHmm'（锚点时间段；分节标题
 
 - **WHEN** 多命中且页面写入成功
 - **THEN** 未被选中的文档字节不变（不删除、不合并），告警由页面显式展示
+
+#### Scenario: 锚点修订/删除按市场序定位（同分钟锚点跨文档重复）
+
+- **WHEN** `sh000688_科创50_*` 与 `000688_国城矿业_*` 各含同分钟锚点 `card-<date>-000688-<HHMM>`（同码文档锚点字符串可能相同），修订/删除请求携带 `market='sh'`
+- **THEN** 按身份序命中 sh 文档并只改动它；股票文档字节不变；无显式市场时声明市场 = 代码段推断（000688 → sz），仅在该身份池内查找
 
 ### Requirement: 交易日归属
 

@@ -47,6 +47,8 @@ DSH 复盘面板的「整理今日复盘」按钮发送的**固定模板**（用
 
 - **用户卡片与图片**：先调用 `review_read_daily`（`code`、`tradeDate`）取得该标的卡片，
   原样保留 `anchor`、`writtenAt`、`body` 与可选 `images`（`relativePath`、绝对 `path`、`mimeType`、`available`）。
+  **同码跨市场（owner 2026-10-08 P0）**：`code` 用清单原样代码——带市场前缀（如 `sh000688`）时原样传，
+  或对带 `qualifier` 的清单条目显式传 `market`；MUST NOT 把指数/锚点条目的附注落到同码股票文档。
   无卡片时跳过该标的；没有 `images` 的旧卡片照常按文字处理。
   对 `available=true` 的图片逐个明确调用宿主原生 `read_image({file_path: image.path})`，
   以绝对 `path` 在本次运行内去重；相同图片只读一次并将结果关联到引用它的各卡片。
@@ -119,7 +121,7 @@ DSH 复盘面板的「整理今日复盘」按钮发送的**固定模板**（用
 
 ## W5 提交（`review_append_ainote` → `review_daily_report`）
 
-1. 逐标的调用 `review_append_ainote`（入参 `code`/`tradeDate`/`body`/`generatedAt`/`dataSources`）
+1. 逐标的调用 `review_append_ainote`（入参 `code`/`tradeDate`/`body`/`generatedAt`/`dataSources`；带市场前缀的清单条目原样传 `code` 或显式传 `market`——同码跨市场定位，owner 2026-10-08 P0）
    落盘 AI 附注。工具保证：**只追加、幂等、原子写**；同一交易日同一标的重复运行返回
    `skipped`（含既有锚点）。**MUST NOT 自己编辑 md 文件写附注**，MUST NOT 寻求
    `force`/`overwrite` 类重算入参。
