@@ -10,6 +10,15 @@ import { REVIEW_HTML, REVIEW_PAGE_MARKER, REVIEW_STATE_PLACEHOLDER } from '../..
 import { parseReviewParams } from '../../src/client/review/params.ts'
 
 describe('REVIEW_HTML：离线自包含（design D-2；spec「无外链」场景）', () => {
+  it('复盘输入页只负责数据事件源，工作流管理与结果由DSH承载', () => {
+    expect(REVIEW_HTML).not.toContain('/review/api/processors/')
+    expect(REVIEW_HTML).not.toContain('关键词管理信息不可用')
+    expect(REVIEW_HTML).not.toContain('parseMentions')
+    expect(REVIEW_HTML).not.toContain('keywordRegistryController')
+    expect(REVIEW_HTML).not.toContain('keywordCardTargets')
+    expect(REVIEW_HTML).not.toContain('rv-connect-dsh')
+    expect(REVIEW_HTML).toContain('保存后由 DSH 检测关键词；工作流结果请在 DSH 查看')
+  })
   it('无任何 http(s):// 外链字面（treeid 导航在 JS 内拼接构造）', () => {
     expect(REVIEW_HTML).not.toMatch(/https?:\/\//i)
     // 拼接构造存在且不含完整 URL 字面：
@@ -95,6 +104,10 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain('流通股本')
     expect(REVIEW_HTML).toContain('.qp-value.up') // 涨跌幅着色（涨红/跌蓝）
     expect(REVIEW_HTML).toContain('亿股') // 股本换算口径
+    // owner 2026-10-14：概念标签行单行横向滚动——标签过多换行会把 B1 撑高顶走 B3
+    // 输入框；全局滚动条 0 高隐藏，容器覆盖 4px 可见细滚动条。
+    expect(REVIEW_HTML).toContain('#rv-concepts { margin-top: 8px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }')
+    expect(REVIEW_HTML).toContain('#rv-concepts::-webkit-scrollbar { height: 4px; }')
     // owner 2026-10-05：treeid 链接移除（页面本身在 TDX 内，无需联动按钮）。
     expect(REVIEW_HTML).not.toContain('id="rv-treeid"')
     expect(REVIEW_HTML).not.toContain('在 TDX 中打开标的')
@@ -133,6 +146,14 @@ describe('REVIEW_HTML：四区块布局与关键布点（tasks 4.1–4.8）', ()
     expect(REVIEW_HTML).toContain("'/review/api/organize'") // 登记接口（写凭据同写卡）
     expect(REVIEW_HTML).toContain('整理指令已复制') // 成功提示引导到 DSH 会话
     expect(REVIEW_HTML).not.toContain('id="rv-reserve"')
+    // owner 2026-10-12：管理页链接移除（冗余——DSH 面板 Workspace 已有设置/任务入口）；
+    // 图片入口改小圆形图标按钮（内联 SVG 图标 + hover 原生 title 提示，编辑条 cloneNode 复用静态入口）。
+    expect(REVIEW_HTML).not.toContain('rv-keyword-management')
+    expect(REVIEW_HTML).not.toContain('关键词工作流管理')
+    expect(REVIEW_HTML).toContain('id="rv-image-pick"')
+    expect(REVIEW_HTML).toContain('rv-icon-btn')
+    expect(REVIEW_HTML).toContain('title="插入图片"')
+    expect(REVIEW_HTML).toContain('makeImagePickBtn')
   })
 
   it('B4：时间倒序渲染 + 纯文本转义（textContent）+ 复制 block 引用 + warnings 显式展示', () => {

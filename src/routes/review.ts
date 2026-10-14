@@ -29,17 +29,14 @@
  * 本地段的纯本地性（tasks 2.6，D-7）：本模块 import 面 = src/review/**、src/paths/**、
  * src/client/review/**，零 `fetch`、零 src/data/** import（结构断言见
  * test/routes-review/review-structure.test.ts）；归属交易日经 deps 注入的 T0
- * service 出口（change 2 内存缓存读，§9）。登记缺口：D-7「缓存未命中不发请求」
- * 需要 change 2 透出缓存只读出口，现按 service 出口消费——未命中行为由 change 2
- * 缓存层决定，路由模块自身零出站能力（结构断言保证）。
+ * service 的同步peekTradeDate缓存出口；未命中保持loading，禁止调用网络解析出口。
  *
  * handler 纯工厂（tasks 2.8，沿 probe D-10 先例）：`createReviewHandler(deps)`
  * 只做「请求对象 → 响应对象」映射；单测以请求桩驱动（test/routes-review/**），
  * 注册/卸载与宿主 requestRejection 真实行为属集成核对（tasks 6.1）。
  */
-import { readdir, stat } from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, relative, resolve, join } from 'node:path'
 import type { Context, TraderKitHttpRequest, TraderKitHttpResponse, TraderKitWebRoute } from '../context-types.ts'
 import { REVIEW_HTML, REVIEW_STATE_PLACEHOLDER } from '../client/review/index.html.ts'
 import { CARD_ANCHOR_RE, normalizeCode } from '../review/anchor.ts'
@@ -60,10 +57,12 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { formatZonedIso } from '../review/format.ts'
 import { appendCard, ConcurrentWriteError, deleteCard, DocMismatchError, locateDoc, parseDoc, AnchorNotFoundError, updateCard, type Card, type Loc } from '../review/store.ts'
 import { createStockProfileIfMissing, type EnsureProfileResult } from '../review/profile-create.ts'
-import { readStockProfiles } from '../review/profile.ts'
+import { historySnapshot, historyFor } from '../review/history.ts'
+import { onReviewWrite } from '../review/write-events.ts'
+import type { LoadState } from '../review/snapshot.ts'
+import { stockProfileSnapshot, readStockProfiles } from '../review/profile.ts'
 import { readBriefMeta, type BriefMeta } from '../summary/brief.ts'
 import { readRunReport, runReportPath, type RunReport } from '../summary/run-report.ts'
-import { resolveArea } from '../paths/resolve.ts'
 import { readCardImages, readImageFile, ReviewImageError, validateImageUploads, type CardImage, type ImageUpload } from '../review/images.ts'
 import { deleteCardImage } from '../review/store.ts'
 
@@ -171,7 +170,7 @@ export interface ReviewDayTarget {
   qualifier?: string
 }
 
-export type ReviewRouteHandler = (req: TraderKitHttpRequest, res: TraderKitHttpResponse) => Promise<void>
+export type ReviewRouteHandler = ((req: TraderKitHttpRequest, res: TraderKitHttpResponse) => Promise<void>) & { dispose?: () => void }
 
 /** `createReviewHandler` 依赖（tasks 2.8 六组 seam；全部显式注入，handler 无全局副作用）。 */
 export interface ReviewHandlerDeps {
@@ -198,6 +197,8 @@ export interface ReviewHandlerDeps {
   getIndexQuote?(code: string): Promise<{ available: boolean; name: string | null; price: number | null; pct: number | null; source: string | null; errors: string[]; detail: string | null; fetchedAt: string | null }>
   // ③ 取数（change 2 service 出口）
   resolveTradeDate: TradeDateResolver['resolve']
+  /** 同步只读T0缓存；缺省或未命中绝不触发网络。 */
+  peekTradeDate?(): Awaited<ReturnType<TradeDateResolver['resolve']>> | null
   getLimitReason: LimitDayFetcher
   getConcepts(input: { code: string; date?: string }): Promise<ReviewConceptView>
   // ④ enrich 回溯、行情四格与名称层②
@@ -212,13 +213,15 @@ export interface ReviewHandlerDeps {
     ltgb: number | null
   } | null>
   /** 本地段名称（层①/③；生产 = createNameResolver({dataRoot}) 不注入反查——本地段零网络）。 */
-  resolveLocalName(code: string): Promise<ReviewLocalNameView>
+  resolveLocalName(code: string, market?: string): Promise<ReviewLocalNameView>
   // ⑤ 资产（形态①：内联 lib——生产 readAsset 恒 null；白名单资产面经单测注入资产表核验）
   htmlTemplate: string
   readAsset(relPath: string): string | null
   // ⑥ 配置
   basePath: string
   dataRoot: string
+  /** 标的目录相对dataRoot；缺省沿AREA_TABLE。 */
+  stockDirectory?: string
   now(): Date
   /** 写接口密钥（owner 裁决 2026-10-05：回环 + 固定密钥；空串由装配层生成随机值）。 */
   writeKey: string
@@ -353,41 +356,17 @@ function isSafeDirectSegment(raw: string): boolean {
  * 声明市场过滤（owner 2026-10-08 P0）：显式 `market` 时仅取该市场文档；缺省时排除
  * 显式**异市场**前缀文档（`sh000688_*` 不属于 `#000688` 深市股票页），旧式无前缀
  * 与同市场前缀文档均计入。
+ * 业务逻辑: 复用共享完整历史快照生成日期列表。
+ * 关键判断: 冷读等待单飞刷新；过期优先返回旧快照。
+ * 异常处理: 刷新失败由快照退避；不可得返回空列表。
+ * 参数: dataRoot数据根、code六位代码、market可选声明市场。
+ * 返回: canonical日期降序列表。
  */
 async function scanCardedDates(dataRoot: string, code: string, market?: 'sh' | 'sz' | 'bj'): Promise<string[]> {
-  if (dataRoot === '') return []
-  // 月桶探针：以占位日期取得月目录（校验照走白名单），dirname 派生 DB/review 基目录
-  //（与 store/context 的既有做法一致，不自行拼接模板）。
-  const probe = resolveArea(dataRoot, 'review', { code, name: '', date: '19700101' })
-  const reviewBase = dirname(probe.areaDirAbs)
-  let months: Dirent[]
-  try {
-    months = await readdir(reviewBase, { withFileTypes: true })
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
-    throw e
-  }
-  const re = new RegExp(`^((?:sh|sz|bj)?)${code}_.+_(\\d{8})\\.md$`)
-  const inferred = marketPrefixForCode(code)
-  const found = new Set<string>()
-  for (const month of months) {
-    if (!month.isDirectory()) continue
-    let names: string[]
-    try {
-      names = await readdir(join(reviewBase, month.name))
-    } catch {
-      continue // 单月读取失败不阻塞其它月份
-    }
-    for (const name of names) {
-      const m = re.exec(name)
-      if (m === null) continue
-      const declared = m[1] === '' ? inferred : m[1]
-      if (market !== undefined ? declared !== market : (m[1] !== '' && m[1] !== inferred)) continue
-      const iso = toCanonicalDateParam(m[2])
-      if (iso !== null) found.add(iso)
-    }
-  }
-  return [...found].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))
+  const snapshot = historySnapshot(dataRoot)
+  let entries = snapshot.read()
+  if (entries === undefined) { await snapshot.refresh(); entries = snapshot.value }
+  return [...new Set(historyFor(entries ?? [], code, market).map((entry) => entry.date))].sort().reverse()
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +422,11 @@ function describeCause(e: unknown): string {
 /**
  * 六路由调度器（认证判定在先；`/review/api/*` 分支在直链分支之前——匹配优先级）。
  * `unauthenticatedReadonly` = 401 且签字只读放行时为 true（页面注入 writable:false）。
+ * 业务逻辑: 装配共享本地快照与同键后台任务，派发鉴权后的路由请求。
+ * 关键判断: local限350毫秒等待，后台继续读取并保留完成结果五秒。
+ * 异常处理: 写后失效拒绝旧任务发布；请求异常转结构化错误。
+ * 参数: deps为存储、缓存只读与网络能力依赖。
+ * 返回: 可卸载监听器的异步路由handler。
  */
 export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler {
   const pageExact = deps.basePath + '/review'
@@ -484,37 +468,24 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     }
   }
 
-  /**
-   * 锚点领域档缓存（owner 2026-10-06 反馈「切换响应速度慢」）：readStockProfiles
-   * 每次全量扫描 DB/stock（766+ 份档案，OneDrive 逐文件读）——按 TTL 缓存锚点清单，
-   * 过期后**后台刷新、先用旧值**（stale-while-revalidate）；档案编辑最迟 TTL+一次
-   * 切换后可见。装配期预热一次（fire-and-forget），消除首切卡顿。
-   */
-  interface AnchorCacheEntry { code: string | null; name: string; role: string | null; isAnchor: boolean; path: string }
-
-  // 档案查询缓存（owner 2026-10-06）：code → 条目（null = 未命中，也缓存以免重复扫描）。
-  // 板块指数/锚点/指数族分散在 800+ 份 DB/stock 档案中，逐码懒查询 + TTL 缓存；
-  // OneDrive 预热后单次扫描约 0.1–0.3s，每码首访一次、TTL 内秒回。
-  const PROFILE_CACHE_TTL_MS = 120_000
-  const profileCache = new Map<string, { at: number; entry: AnchorCacheEntry | null }>()
-
-  async function lookupAnchorEntry(code: string): Promise<AnchorCacheEntry | undefined> {
-    const cached = profileCache.get(code)
-    if (cached !== undefined && Date.now() - cached.at <= PROFILE_CACHE_TTL_MS) {
-      return cached.entry ?? undefined
-    }
-    try {
-      const prof = await readStockProfiles(deps.dataRoot, { codes: [code] })
-      const hit = prof.entries[0]
-      const entry: AnchorCacheEntry | null = hit !== undefined
-        ? { code: hit.code, name: hit.name, role: hit.role, isAnchor: hit.isAnchor, path: hit.path }
-        : null
-      profileCache.set(code, { at: Date.now(), entry })
-      return entry ?? undefined
-    } catch {
-      return undefined // 读取失败不缓存（下次重试）
-    }
+  const profiles = stockProfileSnapshot(deps.dataRoot, (error) => deps.logWarning?.('档案快照刷新失败（五秒后允许重试）：' + describeCause(error)), { directory: deps.stockDirectory })
+  const history = historySnapshot(deps.dataRoot, (error) => deps.logWarning?.('历史快照刷新失败（五秒后允许重试）：' + describeCause(error)))
+  interface LocalTask {
+    path: string | null
+    completedAt: number | null
+    promise: Promise<void>
+    readable: Promise<void>
+    payload: Record<string, unknown>
+    state: { profile: LoadState; tradeDate: LoadState; history: LoadState; cards: LoadState }
   }
+  const localTasks = new Map<string, LocalTask>()
+  const unsubscribe = onReviewWrite((path) => {
+    const rel = relative(resolve(deps.dataRoot), path)
+    if (rel.startsWith('..') || isAbsolute(rel)) return
+    for (const [key, task] of localTasks) {
+      if (task.path === null || resolve(task.path) === resolve(path)) localTasks.delete(key)
+    }
+  })
 
   /**
    * 读取当前标的的本地卡片与图片元数据。
@@ -564,86 +535,112 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
         cards: [],
         cardedDates: [],
         warnings: [],
+        loadState: { profile: 'error', tradeDate: 'error', history: 'error', cards: 'error' },
       })
       return
     }
-    // 归属交易日（仅当未显式指定日期时取 T0——经 service 内存缓存读，§9）。
-    let attribution: Awaited<ReturnType<TradeDateResolver['resolve']>> | null = null
-    if (date === null) {
-      attribution = await deps.resolveTradeDate({})
-      date = attribution.value
+    // 缓存归属日只能同步读取，缺失保持留空，绝不猜交易日。
+    const attribution = date === null ? deps.peekTradeDate?.() ?? null : null
+    if (date === null) date = attribution?.value ?? null
+    const tradeDateState: LoadState = dateParam !== '' || (attribution !== null && attribution.value !== null) ? 'ready' : attribution !== null ? 'error' : 'loading'
+    const key = [code, market ?? '', date ?? '', dateParam !== '' ? 'requested' : 'resolved'].join('|')
+    for (const [oldKey, oldTask] of localTasks) {
+      if (oldTask.completedAt !== null && Date.now() - oldTask.completedAt >= 5_000) localTasks.delete(oldKey)
     }
-    const warnings: string[] = []
-    let locatedPath: string | null = null
-    let exists = false
-    let cards: Array<Card & { images?: CardImage[] }> = []
-    // 锚点领域档（owner 2026-10-06「通达信内部的指标 我只需要作为一个复盘日志评论的领域归类」）：
-    // 88xxxx/999999（TDX 内部指标/显示码）经 DB/stock 档案（代码 索引）解析名称与角色——
-    // 页面据此展示领域归类并允许写卡（复用 review-loop 的 readStockProfiles，零出站）。
-    let anchor: { isAnchor: boolean; name: string | null; role: string | null; path: string | null } | null = null
-    // 查询范围：88xxxx（自制指标）/999999/000xxx（中证指数段——000001 上证指数等；
-    // 页面对非指数用法忽略该段，000xxx 深市股票页不受影响）；缓存命中为 O(1)。
-    if (/^88/.test(code) || code === '999999' || /^000/.test(code)) {
-      try {
-        const hit = await lookupAnchorEntry(code) // TTL 缓存（全量扫描仅在过期后台刷新）
-        anchor = {
-          isAnchor: hit !== undefined && hit.isAnchor,
-          name: hit !== undefined ? hit.name : null,
-          role: hit !== undefined ? hit.role : null,
-          path: hit !== undefined ? hit.path : null,
+    let task = localTasks.get(key)
+    if (task === undefined) {
+      const state: LocalTask['state'] = {
+        profile: /^88/.test(code) || code === '999999' || /^000/.test(code) ? 'loading' : 'ready',
+        tradeDate: tradeDateState,
+        history: 'loading', cards: date === null && attribution !== null ? 'error' : 'loading',
+      }
+      const payload: Record<string, unknown> = {
+        code, codeRaw, dataRootConfigured: true,
+        name: { value: null, nameSource: 'code-only', confidence: 'low' },
+        tradeDate: attribution, date,
+        dateSource: dateParam !== '' ? 'requested' : date !== null ? 'resolved' : 'unavailable',
+        path: null, exists: false, cards: [], cardedDates: [], anchor: null, warnings: [], loadState: state,
+      }
+      const current: LocalTask = { path: null, completedAt: null, promise: Promise.resolve(), readable: Promise.resolve(), payload, state }
+      const warnings = payload.warnings as string[]
+      /**
+       * 业务逻辑: 并行读取档案、历史及当前文档；各段独立发布状态。
+       * 关键判断: 无日期不读取卡片；frontmatter当前名称优先于历史；卡片完成即可响应，其它段继续补位。
+       * 异常处理: 单段失败标记error，不阻断其它段。
+       * 参数: 无，消费本次请求已校验的代码与日期。
+       * 返回: 所有后台本地读取任务。
+       */
+      const runLocal = async (): Promise<void> => {
+        await Promise.all([
+          (async () => {
+            if (state.profile === 'ready') return
+            let scanned = profiles.read()
+            if (scanned === undefined) { await profiles.refresh(); scanned = profiles.value }
+            state.profile = profiles.state
+            if (scanned === undefined) return
+            if (/^88/.test(code) || code === '999999' || /^000/.test(code)) {
+              const result = await readStockProfiles(deps.dataRoot, { codes: [code] }, scanned)
+              const hit = result.entries[0]
+              payload.anchor = { isAnchor: hit?.isAnchor ?? false, name: hit?.name ?? null, role: hit?.role ?? null, path: hit?.path ?? null }
+              warnings.push(...result.warnings)
+            }
+          })().catch((e) => { state.profile = 'error'; warnings.push(describeCause(e)) }),
+          (async () => {
+            let entries = history.read()
+            if (entries === undefined) { await history.refresh(); entries = history.value }
+            if (entries === undefined) { state.history = history.state; return }
+            payload.cardedDates = [...new Set(historyFor(entries, code, market).map((entry) => entry.date))].sort().reverse()
+            const name = await deps.resolveLocalName(code, market)
+            if ((payload.name as ReviewLocalNameView).value === null) payload.name = name
+            state.history = history.state
+          })().catch((e) => { state.history = 'error'; warnings.push(describeCause(e)) }),
+          (current.readable = (async () => {
+            if (date === null) return
+            const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code, tradeDate: date, ...(market === undefined ? {} : { market }) })
+            current.path = located.path
+            payload.path = located.path
+            warnings.push(...located.warnings)
+            try { await stat(located.path) } catch (e) {
+              if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') throw e
+              state.cards = 'ready'
+              return
+            }
+            payload.exists = true
+            const parsed = await deps.parseDoc(located.path)
+            warnings.push(...parsed.warnings)
+            const name = parsed.frontmatter.name
+            if (typeof name === 'string' && name.trim() !== '') payload.name = { value: name, nameSource: 'frontmatter-history', confidence: 'high' }
+            const cards: Array<Card & { images?: CardImage[] }> = []
+            for (const card of parsed.cards) {
+              const images = await readCardImages(deps.dataRoot, located.path, card.body)
+              warnings.push(...images.warnings)
+              cards.push(images.images.length === 0 ? card : { ...card, images: images.images })
+            }
+            payload.cards = cards
+            state.cards = 'ready'
+          })().catch((e) => { state.cards = 'error'; warnings.push(describeCause(e)) })),
+        ])
+      }
+      current.promise = runLocal().finally(() => {
+        current.completedAt = Date.now()
+        if (current.state.history === 'loading' || current.state.profile === 'loading') {
+          if (localTasks.get(key) === current) localTasks.delete(key)
         }
-      } catch (e) {
-        warnings.push(`锚点档案读取失败（不影响写卡）：${describeCause(e)}`)
-      }
+      })
+      localTasks.set(key, current)
+      task = current
     }
-    if (date !== null) {
-      const located = await deps.locateDoc({ dataRoot: deps.dataRoot, code, tradeDate: date, ...(market === undefined ? {} : { market }) })
-      warnings.push(...located.warnings)
-      locatedPath = located.path
-      try {
-        await stat(located.path)
-        exists = true
-      } catch {
-        exists = false // 首建路径尚无文档 → 空态（非错误）
-      }
-      if (exists) {
-        const parsed = await deps.parseDoc(located.path)
-        warnings.push(...parsed.warnings)
-        cards = parsed.cards
-        const enriched: Array<Card & { images?: CardImage[] }> = []
-        for (const card of cards) {
-          const images = await readCardImages(deps.dataRoot, located.path, card.body)
-          warnings.push(...images.warnings)
-          enriched.push(images.images.length === 0 ? card : { ...card, images: images.images })
-        }
-        cards = enriched
-      }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([task.readable, new Promise<void>((done) => { timer = setTimeout(done, 350) })])
+    if (timer !== undefined) clearTimeout(timer)
+    // 写后失效的旧请求也不能发布旧数据；保留loading让客户端补读。
+    if (localTasks.get(key) !== task) {
+      writeJson(res, 200, { ...task.payload, name: { value: null, nameSource: 'code-only', confidence: 'low' }, anchor: null, path: null, exists: false, cards: [], cardedDates: [], loadState: { ...task.state, history: 'loading', cards: 'loading' } })
+      return
     }
-    const cardedDates = await scanCardedDates(deps.dataRoot, code, market)
-    const name = await deps.resolveLocalName(code)
     writeJson(res, 200, {
-      code,
-      codeRaw,
-      dataRootConfigured: true,
-      name,
-      tradeDate:
-        attribution === null
-          ? null
-          : {
-              value: attribution.value,
-              source: attribution.source,
-              isTradingDay: attribution.isTradingDay,
-              confidence: attribution.confidence,
-              marketSuffix: attribution.marketSuffix,
-            },
-      date,
-      dateSource: dateParam !== '' ? 'requested' : date !== null ? 'resolved' : 'unavailable',
-      path: locatedPath,
-      exists,
-      cards,
-      cardedDates,
-      anchor,
-      warnings,
+      ...task.payload, codeRaw, tradeDate: attribution,
+      loadState: { ...task.state, tradeDate: tradeDateState, cards: date === null ? tradeDateState : task.state.cards },
     })
   }
 
@@ -1415,14 +1412,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
     writeJsonError(res, 404, 'NOT_FOUND', '路径不存在')
   }
 
-  // 装配预热（fire-and-forget，owner 2026-10-06 反馈「切换响应速度慢」）：锚点档案
-  // 全量扫描与 T0 内存缓存提前完成——消除重启/首次切换的同步等待。失败静默（运行期
-  // 照常按需重试）。
-  if (deps.dataRoot !== '') {
-    void Promise.resolve(deps.resolveTradeDate({})).catch(() => {}) // T0 内存缓存预热
-  }
-
-  return async function reviewHandler(req, res) {
+  const handler: ReviewRouteHandler = async function reviewHandler(req, res) {
     try {
       const url = typeof req.url === 'string' && req.url !== '' ? req.url : '/'
       const qIndex = url.indexOf('?')
@@ -1476,6 +1466,9 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewRouteHandler
       }
     }
   }
+  handler.dispose = unsubscribe
+  return handler
+
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +1539,11 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     getIndexQuote: (code) => data.getIndexQuote(code),
     // T0 服务出口 fetchedAt 可空，context.ts 的 ResolveTradeDateFn 形状偏紧——装配点结构适配（不改 context.ts）。
     resolveTradeDate: createTradeDateResolver(data.resolveTradeDate as unknown as ResolveTradeDateFn).resolve,
+    peekTradeDate: () => {
+      const upstream = data.peekTradeDate?.() ?? null
+      if (upstream === null) return null
+      return { value: upstream.businessDate, source: upstream.source?.includes('TQ') ? 'TQ-HqDate' : 'T1-tradeDate', isTradingDay: upstream.isTradingDay, confidence: upstream.businessDate !== null && upstream.isTradingDay === true ? 'high' : 'low' }
+    },
     getLimitReason: data.getLimitReason,
     getConcepts: (input) =>
       data.getConcepts(input).then((r) => ({
@@ -1598,10 +1596,10 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
         notes: b.notes,
       }
     },
-    ensureStockProfile: (input) => createStockProfileIfMissing({ dataRoot, code: input.code, name: input.name }),
+    ensureStockProfile: (input) => createStockProfileIfMissing({ dataRoot, directory: data.directories?.stock, code: input.code, name: input.name }),
     logWarning: (message) => logger.warn(message),
-    resolveLocalName: (code) =>
-      localNameResolver.resolve(code).then((r) => ({
+    resolveLocalName: (code, market) =>
+      localNameResolver.resolve(code, market).then((r) => ({
         value: r.value,
         nameSource: r.source === 'frontmatter-history' ? ('frontmatter-history' as const) : ('code-only' as const),
         confidence: r.confidence,
@@ -1610,6 +1608,7 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
     readAsset: () => null, // 资产形态①（内联 lib）：无盘上资产；白名单资产面由单测注入资产表核验（tasks 2.4）
     basePath: REVIEW_BASE_PATH,
     dataRoot,
+    stockDirectory: data.directories?.stock,
     now: () => new Date(),
   })
 
@@ -1634,6 +1633,7 @@ export function registerReviewRoutes(ctx: Context, options: ReviewRoutesOptions 
   ctx.effect(() => {
     const disposers = routeDefs.map((r) => ctx.webServer.register(r))
     return () => {
+      handler.dispose?.()
       for (const dispose of disposers) dispose()
     }
   }, 'dsh-trader-kit: review routes')

@@ -24,7 +24,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
-import { resolveArea } from '../paths/resolve.ts'
+import { Snapshot } from './snapshot.ts'
+import { assertAreaPathUnderRoot, resolveArea } from '../paths/resolve.ts'
 import { sanitizeNameSegment } from '../paths/sanitize.ts'
 import { normalizeCode } from './anchor.ts'
 import { findFrontmatter, parseFrontmatterValues } from './md/frontmatter.ts'
@@ -58,7 +59,7 @@ export interface StockProfilesInput {
 }
 
 /** 档案内部视图（含 mtime，供多命中确定性排序）。 */
-interface ScannedProfile extends StockProfileEntry {
+export interface ScannedProfile extends StockProfileEntry {
   mtimeMs: number
   fileName: string
 }
@@ -106,19 +107,27 @@ function parseProfileText(fileName: string, text: string, relPath: string, mtime
   }
 }
 
-/** 扫描 `DB/stock` 全目录（目录缺失 → 空表 + 告警；单文件失败不阻塞其它文件）。 */
-async function scanStockDir(dataRoot: string): Promise<{ profiles: ScannedProfile[]; warnings: string[] }> {
+/**
+ * 业务逻辑: 扫描选定标的目录完整档案并读取名称、代码与业务属性。
+ * 关键判断: 返回全部档案；读取前复核真实目录不含链接越界。
+ * 异常处理: 目录缺失返回空表和告警；单文件失败跳过，其它错误抛出。
+ * 参数: dataRoot为数据根，opts.directory为可选相对目录。
+ * 返回: 完整档案与读取告警。
+ */
+export async function scanStockDir(dataRoot: string, opts: { directory?: string } = {}): Promise<{ profiles: ScannedProfile[]; warnings: string[] }> {
   const warnings: string[] = []
   if (dataRoot === '') {
     return { profiles: [], warnings: [`${DATA_ROOT_UNCONFIGURED}: 数据根未配置（config.dataRoot 为空）——请在宿主 profile 的 dsh-trader-kit 配置段设置 dataRoot`] }
   }
-  const dirAbs = resolveArea(dataRoot, 'stock').areaDirAbs
+  const area = resolveArea(dataRoot, 'stock', {}, opts)
+  const dirAbs = area.areaDirAbs
+  await assertAreaPathUnderRoot(dataRoot, dirAbs)
   let dirents: Dirent[]
   try {
     dirents = await readdir(dirAbs, { withFileTypes: true })
   } catch (e) {
     if ((e as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-      return { profiles: [], warnings: [`${STOCK_DIR_MISSING}: 标的档案目录不存在（${join('DB', 'stock')}）——未命中不是错误；owner 建档或首卡懒创建后自动可用`] }
+      return { profiles: [], warnings: [`${STOCK_DIR_MISSING}: 标的档案目录不存在（${area.relPath}）——未命中不是错误；owner 建档或首卡懒创建后自动可用`] }
     }
     throw e
   }
@@ -128,9 +137,9 @@ async function scanStockDir(dataRoot: string): Promise<{ profiles: ScannedProfil
     const full = join(dirAbs, d.name)
     try {
       const [text, st] = await Promise.all([readFile(full, 'utf8'), stat(full)])
-      profiles.push(parseProfileText(d.name, text, ['DB', 'stock', d.name].join('/'), st.mtimeMs))
+      profiles.push(parseProfileText(d.name, text, [area.relPath.replaceAll('\\', '/'), d.name].join('/'), st.mtimeMs))
     } catch (e) {
-      warnings.push(`档案读取失败（跳过该文件）：DB/stock/${d.name}——${e instanceof Error ? e.message : String(e)}`)
+      warnings.push(`档案读取失败（跳过该文件）：${area.relPath}/${d.name}——${e instanceof Error ? e.message : String(e)}`)
     }
   }
   return { profiles, warnings }
@@ -146,15 +155,20 @@ function pickLatest(cands: ScannedProfile[]): ScannedProfile {
  * - `codes` 给出：逐代码按「名称直配 → `代码` 索引」定位；未命中/不一致按 spec 处置；
  * - `codes` 与 `names` 皆缺省：返回全部 `锚点: true` 且含 `代码` 的档案（按 code 升序；
  *   `锚点: true` 但缺 `代码` 者记 warnings 并排除——盘面 md 指数段需要代码）。
+ * 业务逻辑: 复用扫描快照或读取配置目录，按确定性规则定位档案。
+ * 关键判断: 名称匹配仍复核代码；读取范围绑定调用者目录，互不影响。
+ * 异常处理: 缺档为未命中；不一致返回告警；配置越界错误透传。
+ * 参数: dataRoot为数据根，input为目标集合，opts为目录与可选完整快照。
+ * 返回: 匹配档案和告警。
  */
 export async function readStockProfiles(
   dataRoot: string,
   input: StockProfilesInput = {},
-  opts: { profiles?: ScannedProfile[]; warnings?: string[] } = {},
+  opts: { directory?: string; profiles?: ScannedProfile[]; warnings?: string[] } = {},
 ): Promise<StockProfilesResult> {
   const scanned = opts.profiles !== undefined
     ? { profiles: opts.profiles, warnings: opts.warnings ?? [] }
-    : await scanStockDir(dataRoot)
+    : await scanStockDir(dataRoot, { directory: opts.directory })
   const { profiles } = scanned
   const warnings = [...scanned.warnings]
   const byFileName = new Map<string, ScannedProfile>()
@@ -193,7 +207,7 @@ export async function readStockProfiles(
       const candidate = byFileName.get(`${name}.md`)
       if (candidate !== undefined) {
         if (candidate.code !== null && candidate.code !== target) {
-          warnings.push(`档案 代码 与目标不一致（不注入）：DB/stock/${name}.md 的 代码=${candidate.code}，目标=${target}`)
+          warnings.push(`档案 代码 与目标不一致（不注入）：${candidate.path} 的 代码=${candidate.code}，目标=${target}`)
           continue
         }
         hit = candidate
@@ -216,18 +230,45 @@ export async function readStockProfiles(
   return { entries, warnings }
 }
 
-/** 名称 → 档案绝对路径（`<名称>.md`；名称段经 `sanitizeNameSegment` 唯一实现净化）。 */
+/**
+ * 业务逻辑: 名称净化后解析档案文件路径，默认或用户目录均经区域解析。
+ * 关键判断: 文件名始终单段，目录必须相对数据根；不修改其他业务区。
+ * 异常处理: 配置非法由resolveArea抛出；本函数不操作文件系统。
+ * 参数: dataRoot为数据根，name/code为标的身份，opts.directory为可选目录。
+ * 返回: 绝对与相对路径及名称截断信息。
+ */
 export function stockProfilePathFor(
   dataRoot: string,
   name: string,
   code: string,
+  opts: { directory?: string } = {},
 ): { absPath: string; relPath: string; nameTruncated: boolean } {
-  const dirAbs = resolveArea(dataRoot, 'stock').areaDirAbs
+  const area = resolveArea(dataRoot, 'stock', {}, { ...opts, forWrite: true })
+  const dirAbs = area.areaDirAbs
   const sanitized = sanitizeNameSegment(name, code)
   const fileName = sanitized.value + '.md'
   return {
     absPath: join(dirAbs, fileName),
-    relPath: ['DB', 'stock', fileName].join('/'),
+    relPath: [area.relPath.replaceAll('\\', '/'), fileName].join('/'),
     nameTruncated: sanitized.nameTruncated,
   }
+}
+const stockSnapshots = new Map<string, Snapshot<{ profiles: ScannedProfile[]; warnings: string[] }>>()
+/**
+ * 业务逻辑: 同一数据根和标的目录共享完整扫描，供逐码查询复用opts.profiles。
+ * 关键判断: 缓存键包含目录，配置切换不复用旧档案；120秒过期、单飞刷新。
+ * 异常处理: 快照读取失败五秒退避，不缓存假空表。
+ * 参数: dataRoot为数据根绝对路径，onError为可选告警出口，opts为可选目录。
+ * 返回: 完整档案快照容器。
+ */
+export function stockProfileSnapshot(dataRoot: string, onError?: (error: unknown) => void, opts: { directory?: string } = {}): Snapshot<{ profiles: ScannedProfile[]; warnings: string[] }> {
+  const key = JSON.stringify([dataRoot, opts.directory ?? null])
+  let snapshot = stockSnapshots.get(key)
+  if (snapshot === undefined) {
+    snapshot = new Snapshot(() => scanStockDir(dataRoot, opts), 120_000, Date.now, onError)
+    stockSnapshots.set(key, snapshot)
+    void snapshot.refresh()
+  }
+  if (onError !== undefined) snapshot.onError = onError
+  return snapshot
 }

@@ -6,7 +6,8 @@
  * 日期折算 MUST 由调用方经 `src/data/date.ts` 的 `toCompactDate` 完成（本模块
  * 不自行 replace/slice 日期串；`<YYYYMM>` 目录段经 date.ts 的 `toMonthSegment`）。
  */
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { lstat, realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { toMonthSegment } from '../data/date.ts'
 import { AREA_KEYS, AREA_TABLE, type AreaKey } from './mapping.ts'
 import { sanitizeNameSegment } from './sanitize.ts'
@@ -16,6 +17,44 @@ const CODE_RE = /^(?:sh|sz|bj)?\d{6}$/ // owner 2026-10-06：可选市场前缀�
 const COMPACT_DATE_RE = /^\d{8}$/
 
 export class PathResolveError extends Error {}
+
+/**
+ * 业务逻辑: 校验配置中的固定相对目录，统一分隔符。
+ * 关键判断: 不允许根本身、空段、穿越、盘符、控制符或模板；不渲染用户目录。
+ * 异常处理: 非法输入抛PathResolveError，禁止隐式回落到默认目录。
+ * 参数: directory为待保存的相对目录。
+ * 返回: 使用斜杠的安全相对路径。
+ */
+export function validateAreaDirectory(directory: string): string {
+  if (typeof directory !== 'string' || directory.trim() !== directory || directory === '' || /[\x00-\x1f\x7f:*?"<>|]/.test(directory) || /^[\\/]/.test(directory) || isAbsolute(directory)) fail('目录必须是数据根下的有效相对路径，禁止绝对路径、控制符或模板')
+  const parts = directory.split(/[\\/]/)
+  if (parts.some(part => part === '' || part === '.' || part === '..' || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) fail('目录必须是有效相对路径，禁止空段、穿越与系统保留名称')
+  return parts.join('/')
+}
+
+/**
+ * 业务逻辑: 操作档案前逐级核验实际文件系统路径，防止手写配置绕过保存校验。
+ * 关键判断: 根下任何现存链接均拒绝；不存在的末尾允许后续返回缺目录或创建失败。
+ * 异常处理: ENOENT保持既有缺目录语义，越界/链接抛PathResolveError，其他I/O错误透传。
+ * 参数: dataRoot为解析基准，path为已完成词法校验的绝对目录或档案路径。
+ * 返回: 无；成功表示现有祖先与目标未逃逸。
+ */
+export async function assertAreaPathUnderRoot(dataRoot: string, path: string): Promise<void> {
+  const root = resolve(requireDataRoot(dataRoot))
+  const rel = relative(root, path)
+  resolveRelativeUnderRoot(root, rel)
+  let canonicalRoot: string
+  try { canonicalRoot = await realpath(root) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+  let cursor = root
+  for (const part of rel.split(sep).filter(Boolean)) {
+    cursor = join(cursor, part)
+    try {
+      if ((await lstat(cursor)).isSymbolicLink()) fail('档案路径不允许符号链接：' + cursor)
+      const actual = await realpath(cursor)
+      if (actual !== canonicalRoot && !actual.startsWith(canonicalRoot + sep)) fail('档案路径越界：' + cursor)
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+  }
+}
 
 function fail(message: string): never {
   throw new PathResolveError(message)
@@ -86,7 +125,7 @@ export function resolveArea(
   dataRoot: string,
   key: AreaKey,
   params: ResolveAreaParams = {},
-  opts: { forWrite?: boolean } = {},
+  opts: { forWrite?: boolean; directory?: string } = {},
 ): ResolvedArea {
   requireDataRoot(dataRoot)
   const area = AREA_TABLE[key]
@@ -126,7 +165,8 @@ export function resolveArea(
   }
 
   // 区域目录渲染：<YYYYMM>/<YYYYMMDD> 由 date 参数折算（经 date.ts）。
-  const dirRel = area.dir
+  if (opts.directory !== undefined && key !== 'stock' && key !== 'patterns') fail(`业务区 '${key}' 不允许覆盖目录`)
+  const dirRel = (opts.directory === undefined ? area.dir : validateAreaDirectory(opts.directory))
     .replace('<YYYYMM>', () => (params.date !== undefined ? toMonthSegment(params.date) : ''))
     .replace('<YYYYMMDD>', () => params.date ?? '')
   const areaDirAbs = resolveRelativeUnderRoot(dataRoot, dirRel)

@@ -59,7 +59,12 @@ describe('复盘图片路由（真实文件系统）', () => {
     expect(readFileSync(saved.json.path, 'utf8')).not.toContain(PNG)
     const repeated = await h.request('/api/card', payload())
     expect(repeated.json.status).toBe('duplicate')
-    const local = await h.request('/api/local?code=600000&date=2026-09-24', undefined, { cookie: 'dsh-auth=ok' })
+    // P0 local有350ms预算；整库并发I/O下允许loading，按真实请求补读而不等待固定时长。
+    let local = await h.request('/api/local?code=600000&date=2026-09-24', undefined, { cookie: 'dsh-auth=ok' })
+    for (let attempt = 0; local.json.loadState.cards === 'loading' && attempt < 10; attempt++) {
+      local = await h.request('/api/local?code=600000&date=2026-09-24', undefined, { cookie: 'dsh-auth=ok' })
+    }
+    expect(local.json.loadState.cards).toBe('ready')
     expect(local.json.cards).toHaveLength(1)
     expect(local.json.cards[0].images).toEqual([{ relativePath: IMAGE, path: file, mimeType: 'image/png', available: true }])
     const image = await h.request('/api/card/image?code=600000&tradeDate=2026-09-24&relativePath=' + encodeURIComponent(IMAGE), undefined, { cookie: 'dsh-auth=ok' })

@@ -5,11 +5,11 @@
  * `MUST NOT` 重建 `provide('traderKit')`——`traderKit` 服务的唯一装配面在
  * `src/service/index.ts`（change 2），这里只对既有服务追加 `api.review`。
  *
- * 三个注册位（波 3 起）：
+ * 复盘注册位（保留既有调用，增加关键词工作流）：
  * ① `attachReviewService`——存储五导出（tasks 1.12，已落地）；
  * ② `registerReviewRoutes`——/review 路由族（tasks §2，change 4 承载绑定层）；
  * ③ `registerReviewDaily`——每日汇总工具与 dailyReport 出口（change 5，src/tools/review-daily.ts）。
- * 各 change 只动自己的文件，本文件只保留三行调用。
+ * `registerKeywordProcessors` 复用保存通知与写鉴权，装配独立关键词任务及管理页。
  */
 import { randomBytes } from 'node:crypto'
 import type { Context } from '../context-types.ts'
@@ -17,6 +17,7 @@ import type { ResolvedTraderKitConfig } from '../config.ts'
 import { registerReviewDaily } from '../tools/review-daily.ts'
 import { registerReviewLoop } from '../tools/review-loop.ts'
 import { registerReviewRoutes } from '../routes/review.ts'
+import { registerKeywordProcessors } from './processors/index.ts'
 import {
   appendAinote,
   appendCard,
@@ -63,6 +64,7 @@ export function registerReview(ctx: Context, config: ResolvedTraderKitConfig): v
   // 重启不变）；空串 = 进程随机生成（页面经服务端注入自动携带，使用者零操作）。
   const writeKey = config.review.writeKey !== '' ? config.review.writeKey : randomBytes(24).toString('hex')
   registerReviewRoutes(ctx, { writeKey })
+  registerKeywordProcessors(ctx, config, writeKey)
   registerReviewDaily(ctx)
   // review-loop（stock-profile + daily-brief）：两工具 + service 出口
   // `traderKit.review.{stockProfiles,writeBrief}`。

@@ -402,6 +402,35 @@ B2 交易日行 SHALL 提供「整理」动作按钮（原挂 B3 工具框，own
 - **WHEN** 审查指令文本与页面代码
 - **THEN** 指令由服务端常量生成（页面零拼接）；文本含标的、日期与「研究辅助、不构成投资建议」定位，不含交易指令
 
+### Requirement: B3 问DeepSeek 卡片级跳转（owner 2026-10-13 追授；2026-10-14 修订为卡片级 + 鲸鱼图标）
+
+B3 输入区 SHALL 在插图图标（`rv-image-pick`）右侧提供「问DeepSeek」圆形图标按钮：**与插图入口同款**（`rv-icon-btn` 圆形、`currentColor` 随按钮色态），图标 = DeepSeek 官方鲸鱼标（内联 SVG path，MUST NOT 引用外部资源、MUST NOT 含 xmlns 字面）。点击后以**卡片级别**组装提示词——B3 输入框正在写的这一张卡内容，结合 B1 头部事实（限定代码+名称、交易日、题材标签、涨停原因正文）——`window.open` 新窗口打开 DeepSeek web 根路径并用 `q` 参数预填输入框；MUST NOT 捆绑当日多卡片（owner 2026-10-14：卡片级询问，非整体交易日多卡片询问）、MUST NOT 自动发送（不带 `autosend`）、MUST NOT 代选 model/search/thinking 偏好、MUST NOT 传递图片（预填契约无图片通道；剪贴板接力留待后续迭代）。提示词组装与 URL 构造 SHALL 为与单测同一实现的纯函数（`src/client/review/ask-deepseek.ts`，与 thread-tag/image-draft 同范式）；提示词 SHALL 以 800 字符为预算（对齐 DeepSeek autosend 量纲），超长时只截断输入内容并显式标注「内容超长已截断」，固定段与结语保留；输入内容为空时跳转仍然可用（纯标的问询）。**DeepSeek origin SHALL 由页面拼接构造**——REVIEW_HTML 保持无 `http(s)://` 外链字面纪律（同 treeid 先例；跳转目标是用户主动导航、非资源加载，「无外链」场景的离线自包含语义不受影响），真实 origin 字面只允许出现在测试内。`window.open` 返回 null（TDX 内嵌拦截——spike 实测 0/6；DSH 壳 deny+`shell.openExternal` 亦返回 null）SHALL 降级为复制提示词并以「若未自动打开请手动访问」口径提示，MUST NOT 阻塞或报错。按钮在无标的时禁用；**只读态可用**（动作零写卡，MUST NOT 挂 writable 门禁）；指数/锚点页可用（题材段省略——concepts 区为角色 chip 非题材）。登录态 SHALL 依赖目标浏览器自身的会话 cookie（MUST NOT 在页面内保存或代理 DS 登录态——DS web 以 `CSP: frame-ancestors 'none'` 禁止嵌入且会话 cookie 为 SameSite=Strict，页面内嵌保存路线不可行）。
+
+#### Scenario: 点击组装并弹窗预填（卡片级）
+
+- **WHEN** 当前标的 `sz001231`（有名称、题材标签与涨停原因），B3 输入「农业避险题材的」，点击鲸鱼图标
+- **THEN** 新窗口打开 DeepSeek web 根路径且 URL 仅带 `q` 参数；提示词按序含标的、交易日、题材、涨停原因、`【我的补充】农业避险题材的` 与「研究辅助，不构成投资建议」结语；MUST NOT 含当日其它卡片的正文；状态行提示确认预填后发送
+
+#### Scenario: 提示词超长截断
+
+- **WHEN** 组装结果超过 800 字符
+- **THEN** 仅输入内容被截断并标注「内容超长已截断」；标的、交易日、题材、涨停原因与结语保留；总长恰为预算
+
+#### Scenario: 弹窗被拦截降级复制
+
+- **WHEN** TDX 内嵌浏览器中 `window.open` 返回 null
+- **THEN** 不发生页内导航，提示词复制进剪贴板并提示「若 DeepSeek 未自动打开，请手动访问 chat.deepseek.com 粘贴发送」；复制失败时显式提示
+
+#### Scenario: 无标的禁用与只读态可用
+
+- **WHEN** 标的缺失（未识别/非法入参）或写通道不可用（writable=false）
+- **THEN** 前者按钮为 `disabled`；后者按钮保持可用（动作零写卡），点击照常弹窗
+
+#### Scenario: 外链字面纪律保持
+
+- **WHEN** 扫描 REVIEW_HTML 与构建产物
+- **THEN** 仍无任何 `http(s)://` 字面（DeepSeek origin 由 `'https:' + '//chat.deepseek.com'` 拼接构造）；无第三方资源加载；「无外链」场景断言不变
+
 ### Requirement: 联动切换标的的未提交内容保护
 
 输入框 SHALL 绑定「来源标的」（首次输入时固化）。hash 变化且输入非空、来源标的与新标的不一致时，页面 MUST NOT 静默把未提交内容归属到新标的：SHALL 显示「未提交内容属于 `<原标的>`（将写入 `<新标的>`）」，并要求一次**显式确认**后方可提交到新标的。未确认时提交 MUST 被拒绝（显式错误），MUST NOT 落盘。

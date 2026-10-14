@@ -22,12 +22,15 @@ import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { encodeFrontmatterValue, findFrontmatter, parseFrontmatterValues } from './md/frontmatter.ts'
 import { normalizeCode } from './anchor.ts'
 import { stockProfilePathFor } from './profile.ts'
+import { assertAreaPathUnderRoot } from '../paths/resolve.ts'
 
 /** 名称不可得告警码（消费方按码分支，MUST NOT 解析文案）。 */
 export const NAME_UNAVAILABLE = 'nameUnavailable'
 
 export interface EnsureProfileInput {
   dataRoot: string
+  /** 自定义标的目录，相对dataRoot；缺省沿区域映射。 */
+  directory?: string
   code: string
   /** 名称（来自写卡入参或清单名称段）；空/缺省 → 不建档。 */
   name?: string | null
@@ -70,6 +73,11 @@ export function renderProfileSkeleton(code: string): string {
  * 首卡懒创建入口（调用方 fire-and-forget；返回值仅供日志与测试等待 seam 使用）。
  * 任一分支均**不抛出**业务失败（失败折叠为告警），除 `resolveArea` 的配置类错误
  * （数据根未配置/区域未登记）——那属装配缺陷，由调用方日志可见。
+ * 业务逻辑: 在配置标的目录排他创建骨架，既有档案只读取冲突信息。
+ * 关键判断: 实际祖先和目标路径先校验，链接越界不进入写入或清理分支。
+ * 异常处理: 配置与路径异常透传；普通建档失败返回告警，不影响写卡。
+ * 参数: input包含数据根、可选相对目录及标的代码名称。
+ * 返回: 创建或跳过状态、相对路径和告警。
  */
 export async function createStockProfileIfMissing(input: EnsureProfileInput): Promise<EnsureProfileResult> {
   const code = normalizeCode(input.code)
@@ -85,7 +93,8 @@ export async function createStockProfileIfMissing(input: EnsureProfileInput): Pr
       warnings: [`${NAME_UNAVAILABLE}: 名称不可得（name=${JSON.stringify(input.name ?? null)}）——MUST NOT 以 <代码>.md 代替建档；待名称可得后的下次写卡再建`],
     }
   }
-  const target = stockProfilePathFor(input.dataRoot, rawName, code)
+  const target = stockProfilePathFor(input.dataRoot, rawName, code, { directory: input.directory })
+  await assertAreaPathUnderRoot(input.dataRoot, target.absPath)
 
   // create-only：`wx` 排他创建（已存在即 EEXIST，不读后覆写）。
   try {

@@ -30,6 +30,8 @@ export interface ReviewLoopFacades {
   data: {
     /** 数据根（装配期绑定；'' = 未配置 → 调用期显式报错）。 */
     dataRoot?: string
+    /** 标的目录相对数据根；模式目录由基础配置展示。 */
+    directories?: { stock: string; patterns: string }
   }
   profiles: {
     read?: typeof readStockProfiles
@@ -39,11 +41,18 @@ export interface ReviewLoopFacades {
   }
 }
 
+/**
+ * 业务逻辑: 绑定宿主数据根与标的目录，复用真实读档和盘面写入函数。
+ * 关键判断: 目录来自当前插件数据服务，不修改全局映射；旧服务缺目录沿默认。
+ * 异常处理: 数据根缺省在实际工具调用时显式报错。
+ * 参数: ctx为宿主上下文。
+ * 返回: 当前插件实例的工具依赖。
+ */
 export function createReviewLoopFacades(ctx: Context): ReviewLoopFacades {
-  const api = (ctx as { traderKit?: { data?: { dataRoot?: unknown } } }).traderKit
+  const api = (ctx as { traderKit?: { data?: { dataRoot?: unknown; directories?: { stock: string; patterns: string } } } }).traderKit
   const dataRoot = typeof api?.data?.dataRoot === 'string' ? api.data.dataRoot : undefined
   return {
-    data: { dataRoot },
+    data: { dataRoot, directories: api?.data?.directories },
     profiles: { read: readStockProfiles },
     brief: { write: writeBrief },
   }
@@ -81,6 +90,13 @@ export interface StockProfilesOutcome {
   warnings: string[]
 }
 
+/**
+ * 业务逻辑: 根据绑定目录读取标的档案，工具与服务共用同一出口。
+ * 关键判断: 只读操作，目录通过第三参数传递，禁止使用全局目录状态。
+ * 异常处理: 依赖或区域配置缺失转换为明确依赖错误，其余错误透传。
+ * 参数: facades为实例依赖，args为代码和对应名称集合。
+ * 返回: 档案结果和告警。
+ */
 export async function runStockProfiles(
   facades: ReviewLoopFacades,
   args: { codes?: string[]; names?: string[] },
@@ -91,7 +107,7 @@ export async function runStockProfiles(
   }
   const dataRoot = requireDataRoot(facades)
   try {
-    return await read(dataRoot, { codes: args.codes, names: args.names })
+    return await read(dataRoot, { codes: args.codes, names: args.names }, { directory: facades.data.directories?.stock })
   } catch (e) {
     asDependencyError(e)
   }
@@ -102,7 +118,7 @@ export function createReviewStockProfilesTool(facades: ReviewLoopFacades) {
   return defineTool({
     name: 'review_stock_profiles',
     description:
-      '读取 DB/stock 标的档案（review-loop 标的上下文 W3 步；只读、零出站、不写入任何档案）。'
+      '读取已配置的标的档案目录（默认 DB/stock；review-loop 标的上下文 W3 步；只读、零出站、不写入任何档案）。'
       + '入参 codes 给出时按「名称直配 → 代码索引兜底」逐代码定位（names 与 codes 按下标对齐，缺省回落代码索引）；两者皆缺省 = 返回全部 锚点: true 且含 代码 的档案（盘面 md 指数段成员）。'
       + '出参 role = 档案 角色 键原文（= 给 agent 的提示词重点内容，唯一进 agent 上下文的业务字段）；isAnchor = 锚点: true；hotTags 仅展示用（MUST NOT 进 agent 上下文）。'
       + '未命中的标的不入结果且不是错误；目录缺失返回空表 + warnings（stockDirMissing）。',

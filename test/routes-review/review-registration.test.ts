@@ -15,6 +15,8 @@ import { resolveTraderKitConfig } from '../../src/config.ts'
 import type { Context, TraderKitWebRoute } from '../../src/context-types.ts'
 import { injectedReviewState, jsonBody, makeReq, makeRes, makeTempRoot, stubRequestRejection } from './helpers.ts'
 import { REVIEW_PAGE_MARKER } from '../../src/client/review/index.html.ts'
+import { BASIC_SETTINGS_PATH, DIRECTORY_CHOOSE_PATH, DIRECTORY_SAVE_PATH } from '../../src/routes/basic-settings.ts'
+import { WORKFLOW_PAGE_PATH } from '../../src/routes/workflow-page.ts'
 
 /** 记录型 fake context：真实对象 + 数组记录，无 mock 库（沿 probe-registration 先例）。 */
 function createHarness(options: { dataRoot?: string; withTraderKit?: boolean } = {}) {
@@ -247,7 +249,7 @@ describe('C 层开关两态（tasks 2.2；owner 2026-10-05 签字「全部免签
 })
 
 describe('装配面结构（挂载后可观察）', () => {
-  it('apply 全量挂载（探针开启）→ 数据工具 3 + tq_skill_manage 1 + 每日汇总 4 + 复盘路由 9 + 探针 1，互不冲突', () => {
+  it('apply 未配置数据根仍挂载基础设置API与工作流页面，精确路由唯一且不冲突', async () => {
     const h = createHarness({ dataRoot: makeTempRoot() })
     const registeredTools: unknown[] = []
     const ctxObj = h.ctx as unknown as Record<string, unknown>
@@ -258,6 +260,25 @@ describe('装配面结构（挂载后可观察）', () => {
     expect(() => apply(h.ctx, resolveTraderKitConfig({}))).not.toThrow()
     // review-loop 起：数据面 4 + tq_skill_manage + 每日汇总 4 + review-loop 2 = 11。
     expect(registeredTools.length).toBe(11)
-    expect(h.routes).toHaveLength(14) // 复盘 13 + 探针 1
+    expect(h.routes).toHaveLength(19) // 复盘13 + 探针1 + 基础设置API4 + 工作流页面1
+    for (const path of [DIRECTORY_CHOOSE_PATH, DIRECTORY_SAVE_PATH, BASIC_SETTINGS_PATH + '/save-execution']) {
+      const matches = h.routes.filter(route => route.path === path)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].kind).toBe('exact')
+      expect((await drive(matches[0].handler, path)).status).toBe(401)
+      expect((await drive(matches[0].handler, path, { cookie: 'dsh-auth=ok' })).status).toBe(405)
+    }
+    for (const path of [BASIC_SETTINGS_PATH, WORKFLOW_PAGE_PATH]) {
+      const matches = h.routes.filter(route => route.path === path)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].kind).toBe('exact')
+      expect((await drive(matches[0].handler, path)).status).toBe(401)
+      const allowed = await drive(matches[0].handler, path, { cookie: 'dsh-auth=ok' })
+      expect(allowed.status).toBe(200)
+      if (path === BASIC_SETTINGS_PATH) {
+        expect(jsonBody(allowed).dataRoot).toBe('')
+        expect(jsonBody(allowed).directories).toHaveLength(5)
+      } else expect(allowed.body).toContain('id="settings-basic-tab"')
+    }
   })
 })

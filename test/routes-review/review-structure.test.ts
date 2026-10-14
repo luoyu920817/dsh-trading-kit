@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { REVIEW_HTML } from '../../src/client/review/index.html.ts'
+import { WORKFLOW_PAGE_HTML } from '../../src/client/processors/page.ts'
 import { runLimitReasonBacktrack } from '../../src/review/enrich.ts'
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -58,6 +59,7 @@ describe('6.3② 全 src 与 test/** 零出站调用点（fet' + 'ch( / http' + 
       if (norm === 'src/skill/download.ts') return false // 具名出站通道 2（change 3）
       if (norm === 'src/client/review/index.html.ts') return false // 页面同源 /review/api/* 调用（浏览器上下文，非插件出站通道；第三方 URL 禁令由 6.3③ 承担）
       if (norm === 'src/client/panel/Panel.ts') return false // review-loop 面板同源 /review/api/day 调用（同为浏览器上下文；同源与零外链由 review-loop-panel 断言承担）
+      if (norm === 'src/client/processors/page.ts') return false // 关键词页仅认证同源API；下方边界断言及实际HTTP页面测试共同核验
       const text = readFileSync(f, 'utf8')
       return text.includes(FETCH_MARKER) || text.includes(HTTP_REQUEST_MARKER)
     })
@@ -71,6 +73,14 @@ describe('6.3② 全 src 与 test/** 零出站调用点（fet' + 'ch( / http' + 
     expect(REVIEW_HTML).toContain("basePath + '/review/api/card'") // 写
   })
 
+  it('关键词管理页固定同源敏感API，不读取第三方URL或注入写凭据', () => {
+    expect(WORKFLOW_PAGE_HTML).toContain("var api = '/dsh-trader-kit/review/api/processors'")
+    expect(WORKFLOW_PAGE_HTML).toContain('return api + path')
+    expect(WORKFLOW_PAGE_HTML).toContain("credentials: 'same-origin'")
+    expect(WORKFLOW_PAGE_HTML).not.toMatch(/https?:\/\//i)
+    expect(WORKFLOW_PAGE_HTML).not.toContain('writeKey')
+  })
+
   it('test/** 除 test/structure.test.ts、test/helpers/data-stub.ts 外零 fet' + 'ch(（具名豁免见 probe-registration 登记）', () => {
     const files = listTsFiles(TEST_DIR)
     expect(files.length).toBeGreaterThan(0)
@@ -78,6 +88,11 @@ describe('6.3② 全 src 与 test/** 零出站调用点（fet' + 'ch( / http' + 
       const norm = rel(f)
       if (norm === 'test/structure.test.ts') return false // 数据线扫描型断言文件（正则字符串含标记字面）
       if (norm === 'test/helpers/data-stub.ts') return false // change 2 本地桩通道（运行时回环断言）
+      if (norm === 'test/routes-review/review-context-page.test.ts') return false // P0实际页面HTTP通道：运行时强制127.0.0.1及本测试端口，覆盖Abort与迟到响应
+      if (norm === 'test/routes-review/workflow-page.test.ts') return false // 关键词页实际HTTP测试：运行时只允许本测试回环服务器上的固定API前缀
+      if (norm === 'test/routes-review/basic-settings.test.ts') return false // 基础设置实际HTTP测试：运行时只允许本测试origin及固定API路径
+      if (norm === 'test/routes-review/review-event-source.test.ts') return false // 事件源真实宿主HTTP组合测试：限定本次随机loopback端口及复盘路径
+      if (norm === 'test/routes-review/directory-editor-host.test.ts') return false // ConfigEditor真实HTTP探针：固定临时loopback端口和save-execution路径
       return readFileSync(f, 'utf8').includes(FETCH_MARKER)
     })
     expect(offenders.map(rel)).toEqual([])

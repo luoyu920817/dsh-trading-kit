@@ -82,6 +82,50 @@ describe('非法值拒绝', () => {
   })
 })
 
+describe('review.processing 关键词工作流处理段（task 3 追加）', () => {
+  it('默认总闸关闭且不填假模型（provider/model/cwd 空串待显式配置）', () => {
+    const resolved = resolveTraderKitConfig()
+    expect(resolved.review.processing).toEqual({
+      enabled: false,
+      maxConcurrency: 1,
+      agentAttemptLimit: 20,
+      provider: '',
+      model: '',
+      cwd: '',
+      maxTokens: 4096,
+      timeoutMs: 120_000,
+    })
+    // Loader 同源：schema 直调（无参）同样得到完整形状与默认值。
+    expect((Config(null) as ResolvedTraderKitConfig).review.processing).toEqual(resolved.review.processing)
+  })
+
+  it('显式配置覆盖开关与显式模型；未覆盖字段仍取默认，writeKey 独立保留', () => {
+    const resolved = resolveTraderKitConfig({
+      review: {
+        writeKey: 'k',
+        processing: { enabled: true, provider: 'provider-x', model: 'model-y', cwd: 'X:/work', maxConcurrency: 2 },
+      },
+    })
+    expect(resolved.review.processing.enabled).toBe(true)
+    expect(resolved.review.processing.provider).toBe('provider-x')
+    expect(resolved.review.processing.model).toBe('model-y')
+    expect(resolved.review.processing.cwd).toBe('X:/work')
+    expect(resolved.review.processing.maxConcurrency).toBe(2)
+    expect(resolved.review.processing.agentAttemptLimit).toBe(20)
+    expect(resolved.review.processing.maxTokens).toBe(4096)
+    expect(resolved.review.processing.timeoutMs).toBe(120_000)
+    expect(resolved.review.writeKey).toBe('k')
+  })
+
+  it('非法处理段值被 schema 拒绝', () => {
+    expect(() => resolveTraderKitConfig({ review: { processing: { enabled: 'yes' as never } } })).toThrow()
+    expect(() => resolveTraderKitConfig({ review: { processing: { maxConcurrency: 0 } } })).toThrow()
+    expect(() => resolveTraderKitConfig({ review: { processing: { agentAttemptLimit: 0 } } })).toThrow()
+    expect(() => resolveTraderKitConfig({ review: { processing: { maxTokens: 0 } } })).toThrow()
+    expect(() => resolveTraderKitConfig({ review: { processing: { timeoutMs: 100 } } })).toThrow()
+  })
+})
+
 describe('未配置 dataRoot → 挂载成功且写入报错', () => {
   it('空 dataRoot 挂载成功（工具注册 + service 提供），写入解析显式报错', () => {
     const { ctx, registeredTools } = createFakeContext()

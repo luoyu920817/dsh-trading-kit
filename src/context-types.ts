@@ -18,6 +18,7 @@
  *   字段，公共面**没有任何 token 校验原语**）。
  */
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
+import type { KeywordJobsLike } from './review/processors/host-jobs.ts'
 
 /** 路由 handler 看到的请求面（node `IncomingMessage` 的结构子集）。 */
 export interface TraderKitHttpRequest {
@@ -69,6 +70,8 @@ export interface TraderKitToolsService {
 
 /** 本插件消费的服务形状（与 cordis `Context` 交集）。 */
 export interface TraderKitContextShape {
+  /** 可选root Jobs能力，缺失不影响旧复盘服务；任务7才接正式执行。 */
+  jobs?: KeywordJobsLike
   webServer: TraderKitWebServer
   connection: TraderKitConnection
   tools: TraderKitToolsService

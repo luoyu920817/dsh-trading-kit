@@ -13,13 +13,9 @@
  *   不接线、不调用 TQ，返回 `source: 'TQ-HqDate'` + `marketSuffix`，用于契约
  *   测试断言「替换 seam 实现后页面/存储层零改动」。MUST NOT 出现在生产注册路径。
  */
-import { readdir, readFile, stat } from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { resolveArea } from '../paths/resolve.ts'
+import { historySnapshot, historyFor } from './history.ts'
 import { isValidIsoDate } from '../data/date.ts'
 import { normalizeCode } from './anchor.ts'
-import { findFrontmatter, parseFrontmatterValues } from './md/frontmatter.ts'
 
 // ---------------------------------------------------------------------------
 // 名称三层兜底（契约 §12.4）
@@ -37,7 +33,7 @@ export interface NameResult {
 }
 
 export interface NameResolver {
-  resolve(code: string): Promise<NameResult>
+  resolve(code: string, market?: string): Promise<NameResult>
 }
 
 export interface NameResolverDeps {
@@ -59,56 +55,38 @@ export function marketSuffixForCode(code: string): '.SH' | '.SZ' | '.BJ' {
 
 /**
  * 层①：扫描本地历史卡片 frontmatter 的 `name`（**零网络**，纯文件系统）。
- * 候选 = `<代码>_*.md`（任意日期、任意月份），取 mtime 最新的非空名称（确定性）。
+ * 业务逻辑: 共用历史索引，取当前市场mtime最新的非空名称。
+ * 关键判断: 冷读等现有单飞刷新，旧值直接使用。
+ * 异常处理: 冷读失败保持名称不可得，不猜名称。
+ * 参数: dataRoot数据根，code六位编码，market显式市场。
+ * 返回: 历史名称或null。
  */
-async function lookupLocalHistoryName(dataRoot: string, code: string): Promise<string | null> {
-  if (dataRoot === '') return null
-  let base = ''
-  let monthEntries: Dirent[] = []
-  try {
-    const probe = resolveArea(dataRoot, 'review', { code, name: '', date: '19700101' })
-    base = dirname(probe.areaDirAbs) // DB/review 基目录（resolveArea 输出派生）
-    monthEntries = await readdir(base, { withFileTypes: true })
-  } catch {
-    return null
+async function lookupLocalHistoryName(dataRoot: string, code: string, market?: string): Promise<string | null> {
+  const snapshot = historySnapshot(dataRoot)
+  let entries = snapshot.read()
+  if (entries === undefined) {
+    await snapshot.refresh()
+    entries = snapshot.value
   }
-  const files: Array<{ path: string; mtimeMs: number }> = []
-  for (const month of monthEntries) {
-    if (!month.isDirectory()) continue
-    const dir = join(base, month.name)
-    const names = await readdir(dir).catch(() => [] as string[])
-    for (const f of names) {
-      if (!f.startsWith(`${code}_`) || !f.endsWith('.md')) continue
-      const full = join(dir, f)
-      try {
-        files.push({ path: full, mtimeMs: (await stat(full)).mtimeMs })
-      } catch { /* 竞态消失的候选跳过 */ }
-    }
-  }
-  files.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  for (const { path } of files) {
-    try {
-      const text = await readFile(path, 'utf8')
-      const fmBlock = findFrontmatter(text)
-      if (fmBlock === null) continue
-      const values = parseFrontmatterValues(fmBlock.bodyLines)
-      if (typeof values.name === 'string' && values.name !== '') return values.name
-    } catch { /* 读取失败跳过该候选 */ }
-  }
-  return null
+  return historyFor(entries ?? [], code, market).find((entry) => entry.name !== null)?.name ?? null
 }
-
-/** 名称三层兜底解析器（层序固定：① 本地历史 → ② 注入的网络反查 → ③ 仅代码）。 */
+/**
+ * 业务逻辑: 名称依次使用共享本地历史、注入的网络反查和仅代码兜底。
+ * 关键判断: 本地只读不注入网络出口；市场声明参与历史筛选。
+ * 异常处理: 非法编码拒绝，历史名称不可得继续下一层。
+ * 参数: deps为数据根与可选网络反查。
+ * 返回: 可复用名称解析器。
+ */
 export function createNameResolver(deps: NameResolverDeps): NameResolver {
   return {
-    async resolve(code: string): Promise<NameResult> {
+    async resolve(code: string, market?: string): Promise<NameResult> {
       const normalized = normalizeCode(code)
       if (normalized === null) {
         throw new Error(`NameResolver: 非法标的编码 '${code}'——期望 6 位数字（经 normalizeCode 归一）`)
       }
       const suffix = marketSuffixForCode(normalized)
       // 层①：本地历史 frontmatter（零网络）。
-      const local = await lookupLocalHistoryName(deps.dataRoot, normalized)
+      const local = await lookupLocalHistoryName(deps.dataRoot, normalized, market)
       if (local !== null) {
         return { value: local, source: 'frontmatter-history', confidence: 'high', marketSuffix: suffix }
       }
@@ -155,8 +133,8 @@ export type ResolveTradeDateFn = (input: { date?: string }) => Promise<{
   requestedDate: string
   businessDate: string | null
   isTradingDay: true | null
-  source: string
-  fetchedAt: string
+  source: string | null
+  fetchedAt: string | null
   evidence: unknown
 }>
 
@@ -173,7 +151,7 @@ export function createTradeDateResolver(resolveTradeDate: ResolveTradeDateFn): T
       const normalizedCode = req?.code !== undefined ? normalizeCode(req.code) : null
       return {
         value: upstream.businessDate,
-        source: upstream.source.includes('TQ') ? 'TQ-HqDate' : 'T1-tradeDate',
+        source: upstream.source?.includes('TQ') ? 'TQ-HqDate' : 'T1-tradeDate',
         isTradingDay: upstream.isTradingDay === true ? true : null,
         confidence: upstream.isTradingDay === true && upstream.businessDate !== null ? 'high' : 'low',
         marketSuffix: normalizedCode !== null ? marketSuffixForCode(normalizedCode) : undefined,

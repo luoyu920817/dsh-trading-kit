@@ -21,6 +21,8 @@ import {
 } from '../../src/routes/review.ts'
 import { REVIEW_PAGE_MARKER } from '../../src/client/review/index.html.ts'
 import { ConcurrentWriteError, AnchorNotFoundError } from '../../src/review/store.ts'
+import { historySnapshot } from '../../src/review/history.ts'
+import { stockProfileSnapshot } from '../../src/review/profile.ts'
 import type { TraderKitHttpRequest, TraderKitHttpResponse } from '../../src/context-types.ts'
 import {
   jsonBody,
@@ -212,6 +214,10 @@ describe('GET /review/api/local：纯本地段（tasks 2.1/2.3/2.6）', () => {
     const { deps } = makeDeps({ dataRoot: root })
     await seedCard(root, '600000', '2026-09-24', 'a', 's1')
     await seedCard(root, '600000', '2026-09-22', 'b', 's2')
+    // 本用例锁定已取得的历史排序；冷态/补位契约由local-budget测试覆盖。
+    const history = historySnapshot(root)
+    await history.refresh()
+    if (history.value === undefined) await history.refresh() // 写中失效的旧预热完成后重建
     const rec = await drive(createReviewHandler(deps), authedReq({ url: API_LOCAL + '?code=600000' }))
     expect(jsonBody<{ cardedDates: string[] }>(rec).cardedDates).toEqual(['2026-09-24', '2026-09-22'])
   })
@@ -654,10 +660,10 @@ describe('handler 边界（tasks 2.8）', () => {
     expect(cardGet.headers['Allow']).toBe('POST')
   })
 
-  it('取数函数抛错 → 500 INTERNAL（handler 不向宿主抛出）', async () => {
+  it('同步缓存函数抛错 → 500 INTERNAL（handler 不向宿主抛出）', async () => {
     const { deps } = makeDeps({
       overrides: {
-        resolveTradeDate: async () => {
+        peekTradeDate: () => {
           throw new Error('T0 不可用')
         },
       },
@@ -838,6 +844,7 @@ describe('GET /api/local：锚点领域档（owner 2026-10-06「领域归类」�
       '角色: "情绪周期"', '锚点: true', '---', '', '# 股性', '', '# 记录', '',
     ].join('\n'), 'utf8')
     const { deps } = makeDeps({ dataRoot: root })
+    await stockProfileSnapshot(root).refresh() // 锁定预热完成后的原有名称/角色契约
     const rec = await drive(createReviewHandler(deps), authedReq({ url: API_LOCAL + '?code=880823' }))
     expect(rec.status).toBe(200)
     const body = jsonBody<{ anchor: { isAnchor: boolean; name: string | null; role: string | null } | null }>(rec)

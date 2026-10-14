@@ -7,7 +7,7 @@
  * 各自定义第二份文件名模板。调用方 MUST NOT 自行拼接业务区路径。
  */
 
-export type AreaKey = 'review' | 'cache' | 'agentSkills' | 'stock' | 'brief' | 'macro' | 'whiteboard' | 'patterns'
+export type AreaKey = 'review' | 'cache' | 'processorRuns' | 'agentSkills' | 'stock' | 'brief' | 'macro' | 'whiteboard' | 'patterns'
 
 /** 模板参数名（白名单见 resolve.ts）。 */
 export type AreaParam = 'code' | 'name' | 'date'
@@ -38,6 +38,11 @@ export const AREA_TABLE: Record<AreaKey, AreaDefinition> = {
     params: ['date'],
     status: 'active',
     note: '数据工具缓存产物（父区 agent/DB/temp/ 既有；按日分桶，非资产中间产物）',
+  },
+  processorRuns: {
+    dir: 'agent/DB/temp/dsh-trader-kit/processors',
+    status: 'active',
+    note: '关键词工作流的持久运行记录、阶段日志与预算（既有临时产物白名单内，不修改用户资产）',
   },
   agentSkills: {
     dir: 'agent/skills',

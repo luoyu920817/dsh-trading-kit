@@ -157,6 +157,7 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
       records.deleteCalls.push(input.anchor)
       return { status: 'deleted' as const, anchor: input.anchor, path: join(dataRoot, 'doc.md'), warnings: [] }
     },
+    peekTradeDate: () => ({ value: STUB_TRADE_DATE, source: 'T1-tradeDate', isTradingDay: true, confidence: 'high', marketSuffix: '.SH' }),
     resolveTradeDate: async () => ({
       value: STUB_TRADE_DATE,
       source: 'T1-tradeDate',
@@ -171,8 +172,8 @@ export function makeDeps(options: MakeDepsOptions = {}): { deps: ReviewHandlerDe
     },
     runBacktrack: runLimitReasonBacktrack,
     lookupQuote: quoteFn,
-    resolveLocalName: async (code) => {
-      const r = await localNameResolver.resolve(code)
+    resolveLocalName: async (code, market) => {
+      const r = await localNameResolver.resolve(code, market)
       return {
         value: r.value,
         nameSource: r.source === 'frontmatter-history' ? 'frontmatter-history' : 'code-only',

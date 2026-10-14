@@ -81,7 +81,10 @@ describe('图片草稿业务判断（浏览器内联与测试共用纯函数）'
     const bytes = new Function('return (' + imageDraftBytes.toString() + ')')() as typeof imageDraftBytes
     expect(bytes('![[files/review-a.png]]', [{ relativePath: 'files/review-a.png', dataBase64: 'QQ==', size: 7, url: 'blob:a' }], 2, parse)).toBe(9)
     expect(REVIEW_HTML).toContain(imageDraftError.toString())
-    expect(REVIEW_HTML).not.toContain('window.open')
+    // window.open 调用点唯一 = 问DeepSeek 跳转（owner 2026-10-13 追授：用户主动导航，
+    // TDX 拦截时降级复制）——spike 决策④「页面交互不依赖弹窗」的其余交互维持无弹窗。
+    expect(REVIEW_HTML.match(/window\.open\(/g)).toHaveLength(1)
+    expect(REVIEW_HTML).toContain("window.open(buildDeepSeekUrl(dsOrigin, prompt), '_blank')")
     expect(REVIEW_HTML).not.toContain('innerHTML')
   })
 })

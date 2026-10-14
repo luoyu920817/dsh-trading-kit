@@ -15,6 +15,8 @@ import { SkillInstallerError } from './skill/errors.ts'
 import { dataRootWhitelistPaths } from './skill/root.ts'
 import { DEFAULT_TQ_SKILL_SOURCE_URL } from './skill/source.ts'
 import { DEFAULT_ZIP_LIMITS, isInsideOrEqual, type ZipLimits } from './skill/zip-guard.ts'
+import { AREA_TABLE } from './paths/mapping.ts'
+import { validateAreaDirectory } from './paths/resolve.ts'
 
 /** 频控护栏默认值（经验值、可配置；design D-5——实测回填前不得当容量承诺）。 */
 export const GUARD_DEFAULTS = {
@@ -62,6 +64,42 @@ export interface ResolvedSkillConfig {
   limits: ZipLimits
 }
 
+/**
+ * 关键词工作流处理段（`review.processing`；keyword-framework 01 §2）。
+ * 全局总闸默认 false：注册表可预注册定义，开启后才自动执行；provider/model/cwd
+ * 一律空串默认——不填任何假模型，执行前由装配层显式配置并可核验。
+ */
+export interface ResolvedProcessingConfig {
+  /** 全局总闸；false = 只登记不执行（工作流自身 enabled 不越过本开关）。 */
+  enabled: boolean
+  /** 同时执行的运行数上限。 */
+  maxConcurrency: number
+  /** 每个运行日的 Agent 启动尝试上限（由接纳/预算服务核计；契约字段 ProcessingHealth.agentAttemptLimit）。 */
+  agentAttemptLimit: number
+  /** Agent provider（'' = 未配置，不得猜默认）。 */
+  provider: string
+  /** 模型名（'' = 未配置；不填任何默认模型）。 */
+  model: string
+  /** Agent 工作目录（'' = 未配置）。 */
+  cwd: string
+  /** 单次 Agent 输出 token 上限。 */
+  maxTokens: number
+  /** 单次执行超时（毫秒）。 */
+  timeoutMs: number
+}
+
+/** `review.processing` 默认值（task 3 契约：总闸关闭、并发 1、尝试 20、120s、4096 tokens）。 */
+export const PROCESSING_DEFAULTS = {
+  enabled: false,
+  maxConcurrency: 1,
+  agentAttemptLimit: 20,
+  provider: '',
+  model: '',
+  cwd: '',
+  maxTokens: 4096,
+  timeoutMs: 120_000,
+} as const
+
 /** `Config.skill.minVersion` 的默认基线（design D-4：默认取当前实测版本 1.2.0）。 */
 export const SKILL_MIN_VERSION_DEFAULT = '1.2.0'
 /** `Config.skill.checkIntervalHours` 的默认节流（design D-12⑥）。 */
@@ -71,6 +109,8 @@ export const SKILL_CHECK_INTERVAL_HOURS_DEFAULT = 24
 export interface ResolvedTraderKitConfig {
   /** 业务产物解析基准；空串 = 未配置（挂载可用，写入期显式报错，design D-1）。 */
   dataRoot: string
+  /** 用户选定的业务目录；始终相对dataRoot，模式区仍只读预留。 */
+  directories: { stock: string; patterns: string }
   sources: {
     s7: { sign: string; ts: string; timeoutMs: number; retries: number }
     s5: { timeoutMs: number; retries: number }
@@ -94,12 +134,17 @@ export interface ResolvedTraderKitConfig {
   /** change 3（tq-skill-installer）追加段（4.1；append-only，不动上文字段）。 */
   skill: ResolvedSkillConfig
   /** change 4（review-page）追加段（owner 裁决 2026-10-05：写接口回环+固定密钥）。 */
-  review: { writeKey: string }
+  review: {
+    writeKey: string
+    /** keyword-framework task 3 追加段：关键词工作流处理（append-only，不动 writeKey）。 */
+    processing: ResolvedProcessingConfig
+  }
 }
 
 /** 部署侧可提供的部分配置（深层可选；Loader schema 或 resolveTraderKitConfig 补默认值）。 */
 export type TraderKitConfig = {
   dataRoot?: string
+  directories?: { stock?: string; patterns?: string }
   sources?: {
     s7?: { sign?: string; ts?: string; timeoutMs?: number; retries?: number }
     s5?: { timeoutMs?: number; retries?: number }
@@ -127,11 +172,19 @@ export type TraderKitConfig = {
     extraSkillRoots?: string[]
     limits?: Partial<ZipLimits>
   }
-  review?: { writeKey?: string }
+  review?: {
+    writeKey?: string
+    /** keyword-framework task 3 追加段（深层可选；缺省由 schema 填默认——总闸关闭、不填假模型）。 */
+    processing?: Partial<ResolvedProcessingConfig>
+  }
 }
 
 export const Config: z<TraderKitConfig> = z.object({
   dataRoot: z.string().default(''),
+  directories: z.object({
+    stock: z.string().default(AREA_TABLE.stock.dir),
+    patterns: z.string().default(AREA_TABLE.patterns.dir),
+  }),
   sources: z.object({
     s7: z.object({
       sign: z.string().default(S7_SIGN_DEFAULT),
@@ -189,8 +242,20 @@ export const Config: z<TraderKitConfig> = z.object({
   }),
   // change 4（review-page）：写接口密钥——空串 = 进程随机生成（经页面注入自动携带）；
   // 设定值 = 固定 key（可写进 profile，重启不变）。
+  // keyword-framework task 3 追加 processing 段：全局总闸默认关闭；注册表可预注册定义，
+  // 开启后才自动执行；provider/model/cwd 空串 = 显式配置前不得猜模型。
   review: z.object({
     writeKey: z.string().default(''),
+    processing: z.object({
+      enabled: z.boolean().default(PROCESSING_DEFAULTS.enabled),
+      maxConcurrency: z.number().min(1).default(PROCESSING_DEFAULTS.maxConcurrency),
+      agentAttemptLimit: z.number().min(1).default(PROCESSING_DEFAULTS.agentAttemptLimit),
+      provider: z.string().default(PROCESSING_DEFAULTS.provider),
+      model: z.string().default(PROCESSING_DEFAULTS.model),
+      cwd: z.string().default(PROCESSING_DEFAULTS.cwd),
+      maxTokens: z.number().min(1).default(PROCESSING_DEFAULTS.maxTokens),
+      timeoutMs: z.number().min(1000).default(PROCESSING_DEFAULTS.timeoutMs),
+    }),
   }),
 })
 
@@ -220,11 +285,16 @@ function assertSkillConfigInvariants(resolved: ResolvedTraderKitConfig): void {
 }
 
 /**
- * 直调方（测试 / 服务装配）的默认值填充；Loader 校验正常先跑，
- * 本函数保证绕过 Loader 的调用者拿到同构的完整配置。
+ * 业务逻辑: 填充宿主和直调方默认值，并归一可配置业务目录。
+ * 关键判断: 目录始终相对数据根；默认沿区域表，不修改共享映射。
+ * 异常处理: 目录与skill不变量失败显式抛出，禁止隐式默认掩盖错误。
+ * 参数: config为可省略的部署侧部分配置。
+ * 返回: 具备全部默认值且完成静态校验的配置。
  */
 export function resolveTraderKitConfig(config?: TraderKitConfig): ResolvedTraderKitConfig {
   const resolved = Config(config ?? {}) as ResolvedTraderKitConfig
+  resolved.directories.stock = validateAreaDirectory(resolved.directories.stock)
+  resolved.directories.patterns = validateAreaDirectory(resolved.directories.patterns)
   assertSkillConfigInvariants(resolved)
   return resolved
 }

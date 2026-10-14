@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "id": "expectation",
+      "label": "预期整理",
+      "mentions": ["预期"],
+      "enabled": true,
+      "implementationId": "expectation@1",
+      "options": {}
+    }
+  ]
+}

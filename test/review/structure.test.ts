@@ -104,7 +104,11 @@ describe('tasks 1.12：文档原子写唯一，附件事务独立', () => {
     expect(renamers.map((f) => f.replaceAll('\\', '/'))).toEqual(
       expect.arrayContaining([expect.stringContaining('src/review/store.ts')]),
     )
-    expect(renamers.map((f) => f.replaceAll('\\', '/').split('/').pop()).sort()).toEqual(['images.ts', 'store.ts'])
+    const documentRenamers = renamers.filter(f => !f.replaceAll('\\', '/').includes('/processors/'))
+    expect(documentRenamers.map((f) => f.replaceAll('\\', '/').split('/').pop()).sort()).toEqual(['images.ts', 'store.ts'])
+    const runtimeRenamers = renamers.filter(f => f.replaceAll('\\', '/').includes('/processors/'))
+    expect(runtimeRenamers.map(f => f.replaceAll('\\', '/').split('/').pop()).sort()).toEqual(['records.ts', 'scheduler.ts'])
+    for (const file of runtimeRenamers) expect(readFileSync(file, 'utf8')).toContain("'processorRuns'")
     const imagesSource = readFileSync(join(REVIEW_DIR, 'images.ts'), 'utf8')
     expect(imagesSource).toContain('stageImageDeletes')
     expect(imagesSource).toContain('settleImageDeletes')

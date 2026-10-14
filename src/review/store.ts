@@ -24,10 +24,11 @@
  * - 写前归属硬校验：目标文档 frontmatter 的 `tradeDate` + `code` 与入参 `loc`
  *   不一致 → 抛 `DOC_MISMATCH`（含两侧值），MUST NOT 追加、MUST NOT 改用其它文档。
  */
-import { readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
-import { randomBytes } from 'node:crypto'
-import { basename, dirname, join } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import type { SourceCardRef, SourceCardSnapshot } from './processors/types.ts'
 import { isValidIsoDate, toCompactDate } from '../data/date.ts'
 import { ensureDir } from '../paths/fs.ts'
 import { resolveArea } from '../paths/resolve.ts'
@@ -37,6 +38,7 @@ import { declaredMarketOf, marketPrefixForCode, qualifyCode, type MarketPrefix, 
 import { parseImageEmbeds } from './image-refs.ts'
 import { ReviewImageError, rollbackImageUploads, settleImageDeletes, stageImageDeletes, validateImageUploads, writeImageUploads, type ImageUpload } from './images.ts'
 import { anchorTimeToHeading, formatAnchorTime, formatZonedIso } from './format.ts'
+import { notifyReviewWrite } from './write-events.ts'
 import { encodeStoreWarning, type AInote, type Card, type StoreWarning } from './types.ts'
 import {
   buildFrontmatterBlock,
@@ -159,6 +161,40 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     if (fileLocks.get(key) === sentinel) fileLocks.delete(key)
   })
   return run
+}
+
+/**
+ * 在复盘写入的同一短锁内核验真实卡片，供工作流来源与结果提交使用。
+ * 业务逻辑: 验证路径/归属/唯一锚点后冻结整卡正文和版本，再执行短提交回调。
+ * 关键判断: 固定原路径，不追随更名；锁键与append/update一致；附注不参与版本。
+ * 异常处理: 不可读/删除/歧义分别拒绝，不推断删除；回调异常传播并释放锁。
+ * 参数: dataRoot为数据根，source为实际来源，commit不能执行网络/宿主或再次取卡片锁。
+ * 返回: 回调结果。
+ */
+export async function withVerifiedCardSnapshot<T>(dataRoot: string, source: SourceCardRef, commit: (actual: SourceCardSnapshot) => Promise<T>): Promise<T> {
+  const path = resolve(dataRoot, source.relativePath)
+  const rel = relative(resolve(dataRoot), path).replaceAll('\\', '/')
+  if (isAbsolute(source.relativePath) || !/^DB\/review\/\d{6}\/[^/]+\.md$/.test(rel) || rel !== source.relativePath.replaceAll('\\', '/')) throw new Error('SOURCE_PATH_INVALID')
+  if (!/^\d{6}$/.test(source.code) || !isValidIsoDate(source.tradeDate) || !CARD_ANCHOR_RE.test(source.anchor)) throw new Error('SOURCE_IDENTITY_MISMATCH')
+  const resolved = resolveArea(dataRoot, 'review', { code: source.code, name: '', date: toCompactDate(source.tradeDate) })
+  if (dirname(path) !== resolved.areaDirAbs) throw new Error('SOURCE_IDENTITY_MISMATCH')
+  return withLock(`${resolved.areaDirAbs}::${source.code}_${toCompactDate(source.tradeDate)}`, async () => {
+    let real: string
+    try { real = await realpath(path) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('SOURCE_REMOVED')
+      throw new Error('SOURCE_UNVERIFIED', { cause: error })
+    }
+    if (real !== path) throw new Error('SOURCE_PATH_INVALID')
+    let parsed: Awaited<ReturnType<typeof parseDoc>>
+    try { parsed = await parseDoc(path) } catch (error) { throw new Error('SOURCE_UNVERIFIED', { cause: error }) }
+    const fileIdentity = /^(sh|sz|bj)?(\d{6})_.+_(\d{8})\.md$/.exec(basename(path))
+    if (parsed.frontmatter.code !== source.code || parsed.frontmatter.tradeDate !== source.tradeDate || (fileIdentity?.[1] ?? null) !== source.market || fileIdentity?.[2] !== source.code || fileIdentity?.[3] !== toCompactDate(source.tradeDate)) throw new Error('SOURCE_IDENTITY_MISMATCH')
+    if (parsed.warnings.some(w => /^\[(duplicateAnchor|ghostAnchor)\]/.test(w))) throw new Error('SOURCE_AMBIGUOUS')
+    const card = parsed.cards.find(c => c.anchor === source.anchor)
+    if (card === undefined) throw new Error('SOURCE_REMOVED')
+    const sourceRevision = createHash('sha256').update(JSON.stringify([rel, source.anchor, source.market, source.code, source.tradeDate, card.body])).digest('hex')
+    return commit({ relativePath: rel, anchor: source.anchor, market: source.market, code: source.code, tradeDate: source.tradeDate, body: card.body, sourceRevision, verification: 'verified' })
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +867,14 @@ async function appendIntoDailyDoc(input: AppendInput): Promise<AppendOutcome> {
   })
 }
 
-/** 追加卡片。业务逻辑: 校验正文附件并同锁提交。关键判断: 附件必须有实际引用。异常处理: 拒绝空正文及无效图片。参数: loc/body/images/now/requestId。返回: 状态、锚点、路径、告警。 */
+/**
+ * 追加用户复盘卡片。
+ * 业务逻辑: 校验图文并原子提交，真实创建后使页面读取缓存失效。
+ * 关键判断: 附件必须有实际引用；clientRequestId 幂等重放不发布失效事件。
+ * 异常处理: 空正文、无效图片或存储失败拒绝；监听失败不影响已提交结果。
+ * 参数: input 包含归属、正文、图片及幂等标识。
+ * 返回: 创建或重复状态、锚点、文档路径及告警。
+ */
 export async function appendCard(input: {
   loc: Loc
   body: string
@@ -851,10 +894,18 @@ export async function appendCard(input: {
     images: validateImageUploads(input.images, input.body),
   })
   const status = outcome.status === 'duplicate' ? 'duplicate' as const : 'created' as const
+  if (status === 'created') notifyReviewWrite(outcome.path)
   return { status, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 追加附注（契约 §3 `appendAinote`；change 5 的工具出口与本实现同一份）。 */
+/**
+ * 追加 AI 附注。
+ * 业务逻辑: 使用同一原子存储入口，仅真实创建时使页面读取缓存失效。
+ * 关键判断: 幂等跳过不发布事件，不改写用户卡片。
+ * 异常处理: 存储失败不发布；监听失败不影响提交结果。
+ * 参数: input 包含归属、正文、生成时刻与数据来源。
+ * 返回: 创建或跳过状态、锚点、路径及告警。
+ */
 export async function appendAinote(input: {
   loc: Loc
   body: string
@@ -871,6 +922,7 @@ export async function appendAinote(input: {
     dataSources: input.dataSources,
   })
   const status = outcome.status === 'skipped' ? 'skipped' as const : 'created' as const
+  if (status === 'created') notifyReviewWrite(outcome.path)
   return { status, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
@@ -1079,7 +1131,7 @@ async function transformDailyDoc(input: {
   })
 }
 
-/** 修订卡片。业务逻辑: 替换正文、提交附件及回收移除引用。关键判断: 保留锚点meta。异常处理: 空正文拒绝，图片错误透传。参数: anchor/body/root/images/market。返回: 更新状态与告警。 */
+/** 修订卡片。业务逻辑: 替换正文、提交附件及回收移除引用，成功后通知读取失效。关键判断: 保留锚点meta。异常处理: 空正文拒绝，图片错误透传，失败不发布。参数: anchor/body/root/images/market。返回: 更新状态与告警。 */
 export async function updateCard(input: {
   anchor: string
   body: string
@@ -1092,10 +1144,11 @@ export async function updateCard(input: {
     throw new Error('updateCard: 卡片正文为空——删除请用 deleteCard 通道（MUST NOT 以空正文冒充删除）')
   }
   const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'update', body: input.body, images: validateImageUploads(input.images, input.body), market: input.market })
+  notifyReviewWrite(outcome.path)
   return { status: 'updated' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 删除卡片。业务逻辑: 移除分节并清理附件。关键判断: 其他分节保真。异常处理: 失败恢复附件。参数: anchor/root/market。返回: 删除状态及告警。 */
+/** 删除卡片。业务逻辑: 移除分节并清理附件，成功后通知读取失效。关键判断: 其他分节保真。异常处理: 失败恢复附件且不发布。参数: anchor/root/market。返回: 删除状态及告警。 */
 export async function deleteCard(input: {
   anchor: string
   dataRoot: string
@@ -1103,12 +1156,14 @@ export async function deleteCard(input: {
   market?: string
 }): Promise<Result<{ status: 'deleted'; anchor: string; path: string }>> {
   const outcome = await transformDailyDoc({ anchor: input.anchor, dataRoot: input.dataRoot, mode: 'delete', market: input.market })
+  notifyReviewWrite(outcome.path)
   return { status: 'deleted' as const, anchor: outcome.anchor, path: outcome.path, warnings: outcome.warnings }
 }
 
-/** 删除卡片图片。业务逻辑: 精准移除同路径嵌入并删除文件。关键判断: 最后图删除仍保留空卡片。异常处理: 未引用抛404，事务失败恢复。参数: anchor/root/relativePath/market。返回: 更新状态及告警。 */
+/** 删除卡片图片。业务逻辑: 精准移除同路径嵌入并删除文件，成功后通知读取失效。关键判断: 最后图删除仍保留空卡片。异常处理: 未引用抛404，事务失败恢复且不发布。参数: anchor/root/relativePath/market。返回: 更新状态及告警。 */
 export async function deleteCardImage(input: { anchor: string; dataRoot: string; relativePath: string; market?: string }): Promise<Result<{ status: 'updated'; anchor: string; path: string }>> {
   const outcome = await transformDailyDoc({ ...input, mode: 'delete-image' })
+  notifyReviewWrite(outcome.path)
   return { ...outcome, status: 'updated' }
 }
 

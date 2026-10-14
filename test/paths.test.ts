@@ -26,7 +26,7 @@ afterEach(() => {
 describe('业务区表穷举', () => {
   it('8 个业务区 key 的目录解析结果与映射表一致', () => {
     expect(Object.keys(AREA_TABLE).sort()).toEqual(
-      ['agentSkills', 'brief', 'cache', 'macro', 'patterns', 'review', 'stock', 'whiteboard'].sort(),
+      ['agentSkills', 'brief', 'cache', 'processorRuns', 'macro', 'patterns', 'review', 'stock', 'whiteboard'].sort(),
     )
     // 复盘卡片：date 折算月目录段。
     const review = resolveArea(root, 'review', { code: '600000', name: '浦发银行', date: '20260924' })

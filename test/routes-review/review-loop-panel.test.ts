@@ -32,9 +32,10 @@ describe('打包声明（spec「client 打包与宿主 SDK 纪律」）', () => 
     }
     // 运行时依赖的宿主客户端包（slots 注册表 / 会话发送 / 字典）
     expect(pkg.dsh?.client?.inject as string[]).toEqual([
-      '@deepseek-ai/dsh-client-ui-slots',
-      '@deepseek-ai/dsh-client-locale',
-      '@deepseek-ai/dsh-client-ui-conversation',
+      '@deepseek-ai/dsh-client-ui-renderer',
+      '@deepseek-ai/dsh-client-ui-layout',
+      '@deepseek-ai/dsh-client-ui-sidebar',
+      '@deepseek-ai/dsh-client-ui-settings-general',
     ])
   })
 
@@ -45,29 +46,31 @@ describe('打包声明（spec「client 打包与宿主 SDK 纪律」）', () => 
 })
 
 describe('构建产物（tasks 5.5）', () => {
-  it('lib/client.js 存在且含面板 id / 标题 / 触发短语', () => {
+  it('lib/client.js 存在且含导航/主页面/设置视图，不调用根会话发送', () => {
     if (!existsSync(LIB_DIR)) {
       throw new Error('lib/ 不存在：先跑 pnpm build，再跑本断言（构建产物验收依赖 pnpm build 产物）')
     }
     const client = read('lib/client.js')
-    const params = read('lib/panel/params.js')
-    expect(params).toContain(PANEL_ID)
+    expect(client).toContain(PANEL_ID)
+    expect(client).toContain('复盘卡片')
+    expect(client).toContain('关键词任务')
+    expect(client).toContain('settings.section')
+    expect(client).toContain('/dsh-trader-kit/review/processors#settings')
+    expect(client).not.toContain('conversation.send')
     expect(client).toContain('sidebar.panellist')
     expect(client).toContain('main')
   })
 
-  it('宿主 SDK 与 React 不内联（external 生效：产物只 import 不实现）', () => {
+  it('宿主 SDK 与 React 不内联（由 loader require 提供共享 React）', () => {
     const client = read('lib/client.js')
-    const panel = read('lib/panel/Panel.js')
-    expect(panel).toMatch(/from\s+["']react["']/)
+    expect(client).toMatch(/require\(["']react["']\)/)
     // 宿主 SDK 零内联：产物中不出现其内部实现特征串。
-    for (const text of [client, panel]) {
+    for (const text of [client]) {
       expect(text).not.toContain('dsh-client-ui-slots')
       expect(text).not.toContain('createSlotRegistry')
     }
     // 无外链（同源 API 由 basePath 拼接，不写 http(s):// 字面）。
     expect(client).not.toMatch(/https?:\/\//i)
-    expect(panel).not.toMatch(/https?:\/\//i)
   })
 
   it('client 源码零外链、零写通道、零 writeKey', () => {

@@ -11,3 +11,10 @@ coverage/
 
 # 实机验收临时数据根
 .accept-dataRoot/
+
+# 本地宿主日志、离线安装探针、回退备份和交付快照；开发Markdown记录可单独提交。
+.planning/**/workers/
+.planning/**/*.log
+.planning/.active_plan
+.planning/**/.attestation
+.planning/**/baseline-*.txt

@@ -15,12 +15,14 @@
  * 的脚本来源见 `src/config.ts` 头注释与 docs/carryover.md §3.1。
  */
 import type { Context } from '../context-types.ts'
+import type { ProcessingService } from '../review/processors/types.ts'
 import type { ResolvedTraderKitConfig } from '../config.ts'
 import { createDataDeps, type DataDeps } from '../data/deps.ts'
 import { fetchQuoteName, fetchQuoteSnapshot, type QuoteSnapshotResult } from '../data/quote-name.ts'
 import { fetchIndexQuote, type IndexQuoteResult } from '../data/index-quote.ts'
 import { createDataHealth, type DataHealth, type DataHealthSnapshot } from '../data/health.ts'
-import { resolveTradeDate, type TradeDateResult } from '../data/trade-date.ts'
+import type { TradeDateResult } from '../data/trade-date.ts'
+import { createTradeDateCache } from '../data/trade-date-cache.ts'
 import { getLimitReason, type LimitReasonResult } from '../data/limit-reason.ts'
 import { getConcepts, type ConceptsResult } from '../data/concepts.ts'
 import { getStockBasics, type MarketSuffix, type StockBasics } from '../data/tq-local.ts'
@@ -44,8 +46,12 @@ export interface TraderKitDataApi {
   dataRootConfigured: boolean
   /** 解析后的数据根（装配期已知；复盘线 scanDailyCardTargets 装配期绑定，design D-1）。 */
   dataRoot: string
+  /** 装配期绑定的相对目录；旧独立消费者可省略并沿默认映射。 */
+  directories?: ResolvedTraderKitConfig['directories']
   /** T0 交易日解析（唯一日期事实源）。 */
   resolveTradeDate(input?: { date?: string }): Promise<TradeDateResult>
+  /** 当前限流日已解析权威快照；同步只读内存，不触发I/O或猜测业务日。 */
+  peekTradeDate(): TradeDateResult | null
   /** T1 涨停原因（主源 S7、备源 S5）。 */
   getLimitReason(input: { code: string; date?: string }): Promise<LimitReasonResult>
   /** T2 概念（S8 实时快照；date 仅用于缓存分桶）。 */
@@ -72,6 +78,8 @@ export interface TraderKitService {
   skill?: Record<string, unknown>
   /** change 4/5 追加：`review.{locateDoc,parseDoc,appendCard,appendAinote,scanDailyCardTargets,dailyReport}`（装配期挂载）。 */
   review?: Record<string, unknown>
+  /** 关键词工作流运行/日志共享服务；异步装配完成后可用。 */
+  processing?: ProcessingService
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -81,7 +89,14 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** 数据面装配（测试可注入 deps/health 以接本地桩；生产走 config 默认装配）。 */
+/**
+ * 装配数据面与工具出口。
+ * 业务逻辑: 共用依赖与交易日解析快照，注册工具并挂载服务。
+ * 关键判断: 交易日后台预热仅在配置数据根时执行，生命周期由ctx.effect释放。
+ * 异常处理: 健康探测与后台刷新失败不阻塞服务挂载，显式调用透传原结果。
+ * 参数: ctx为宿主，config为解析配置，overrides提供测试真实依赖。
+ * 返回: 无；出口挂载至ctx.traderKit。
+ */
 export function registerData(ctx: Context, config: ResolvedTraderKitConfig, overrides: {
   deps?: DataDeps
   health?: DataHealth
@@ -89,12 +104,16 @@ export function registerData(ctx: Context, config: ResolvedTraderKitConfig, over
   const deps = overrides.deps ?? createDataDeps(config)
   const health = overrides.health ?? createDataHealth(config, { transport: deps.transport, now: deps.now })
   health.start() // 异步探测：不阻塞挂载；失败不影响工具可用（design D-8）
+  const tradeDateCache = createTradeDateCache(deps)
+  ctx.effect(() => tradeDateCache.start(), 'dsh-trader-kit: trade date snapshot')
 
   /** 双出口同一实现：service 出口函数（工具 facade 也指向这里）。 */
   const dataApi: TraderKitDataApi = {
     dataRootConfigured: config.dataRoot !== '',
     dataRoot: config.dataRoot,
-    resolveTradeDate: (input = {}) => resolveTradeDate(deps, input),
+    directories: { ...config.directories },
+    resolveTradeDate: tradeDateCache.resolve,
+    peekTradeDate: tradeDateCache.peek,
     getLimitReason: (input) => getLimitReason(deps, input),
     getConcepts: (input) => getConcepts(deps, input),
     getQuoteName: (code) => fetchQuoteName(deps, code),
@@ -118,14 +137,23 @@ export function registerData(ctx: Context, config: ResolvedTraderKitConfig, over
   const api: TraderKitService = {
     data: dataApi,
     health: {
+      /**
+       * 读取宿主健康状态。
+       * 业务逻辑: 合并数据探测、后台交易日预算警告与skill状态。
+       * 关键判断: 后台预算跳过不会冒充已刷新，skill缺省保留既有降级提示。
+       * 异常处理: 未挂载skill时返回null与警告；交易日警告仅读内存。
+       * 参数: 无。
+       * 返回: data与skill两段健康视图。
+       */
       status(): TraderKitHealthStatus {
         const snapshot = health.dataStatus()
+        const dataWarnings = [...snapshot.warnings, ...tradeDateCache.backgroundWarnings()]
         // change 3（tq-skill-installer）未挂载：skill 段为 null 并在 data.warnings 记明（design D-7）。
         const skillApi = (ctx as { traderKit?: { skill?: { status?: unknown } } }).traderKit?.skill
         const skill = typeof skillApi?.status === 'function' ? (skillApi.status as () => unknown)() : null
         const warnings = skill === null
-          ? [...snapshot.warnings, 'skill 段不可用：change 3（tq-skill-installer）的 skill.status 未挂载（health.status() 两段视图的 skill=null）']
-          : snapshot.warnings
+          ? [...dataWarnings, 'skill 段不可用：change 3（tq-skill-installer）的 skill.status 未挂载（health.status() 两段视图的 skill=null）']
+          : dataWarnings
         return { data: { ...snapshot, warnings }, skill }
       },
     },

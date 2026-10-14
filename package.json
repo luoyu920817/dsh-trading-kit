@@ -19,6 +19,7 @@
   },
   "files": [
     "lib",
+    "config/card-processors.json",
     "dsh.plugin.json",
     "cordis.patch.yml",
     "README.md"
@@ -57,9 +58,10 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-settings-general"
       ]
     }
   }

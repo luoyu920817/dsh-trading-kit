@@ -187,7 +187,10 @@ describe('边界扫描：出站通道调用点（tasks 1.9；§7/R2-7 补充口�
       //    data-foundation / review-page tasks 的登记条目。
       .filter((f) => {
         const norm = f.split('\\').join('/')
-        return !norm.includes('test/structure.test.ts') && !norm.includes('test/helpers/data-stub.ts')
+        // P0页面脚本集成测试：真实HTTP入口强制127.0.0.1及本测试端口，禁止第三方出站。
+        // 基础设置API实际HTTP测试仅访问本测试服务器，运行时校验origin与固定路径。
+        // 事件源组合测试仅访问本次临时loopback服务，使用真实宿主门控和真实存储。
+        return !norm.includes('test/structure.test.ts') && !norm.includes('test/helpers/data-stub.ts') && !norm.includes('test/routes-review/review-context-page.test.ts') && !norm.includes('test/routes-review/workflow-page.test.ts') && !norm.includes('test/routes-review/basic-settings.test.ts') && !norm.includes('test/routes-review/review-event-source.test.ts') && !norm.includes('test/routes-review/directory-editor-host.test.ts')
       })
     expect(targets.length).toBeGreaterThan(0)
     for (const file of targets) {
@@ -228,6 +231,8 @@ function listFilesRecursive(relDir: string, suffix: string): string[] {
 /** 扫描域（偏离裁决）：src/routes/** 与 src/client/** 下的全部 .ts。 */
 function collectLaneFiles(): string[] {
   return [...listFilesRecursive('src/routes', '.ts'), ...listFilesRecursive('src/client', '.ts')]
+    // 基础设置属于配置读取面，消费已解析类型而不新增Config；其DTO白名单由实际HTTP测试核验。
+    .filter(file => !['src/routes/basic-settings.ts', 'src/routes/directory-settings-host.ts'].includes(file.replace(/\\/g, '/')))
 }
 
 /** 探针自有 client 文件：src/client/probe/**。 */

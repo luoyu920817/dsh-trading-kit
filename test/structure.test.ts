@@ -184,7 +184,7 @@ describe('装配面结构（挂载后可观察，支撑 7.2）', () => {
       data: Record<string, unknown>
       health: { status(): { data: { warnings: string[] }; skill: unknown } }
     }
-    for (const fn of ['resolveTradeDate', 'getLimitReason', 'getConcepts', 'guardStatus']) {
+    for (const fn of ['resolveTradeDate', 'peekTradeDate', 'getLimitReason', 'getConcepts', 'guardStatus']) {
       expect(typeof api.data[fn], `data.${fn} 出口存在`).toBe('function')
     }
     const status = api.health.status()

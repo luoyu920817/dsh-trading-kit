@@ -7,7 +7,9 @@
  * Fetch + Promise 的保守子集——内联脚本 MUST NOT 使用 ES module / 可选链（?.）/
  * 空值合并（??）/ 模板字符串 / async / await；用 var/function/then 链。
  * 离线自包含：无任何 http(s):// 外链字面（owner 2026-10-05：treeid 联动按钮移除——
- * 页面本身运行在 TDX 内；spike 决策①通道保留备用）；
+ * 页面本身运行在 TDX 内；spike 决策①通道保留备用）；唯一例外 = 「问DeepSeek」
+ * 跳转目标（owner 2026-10-13 追授）：用户主动导航非资源加载，origin 以拼接构造
+ * 保持零字面（ask-deepseek.ts 模块零字面，真实 origin 只出现在测试内）；
  * 网络请求仅同源 /review/api/*（本地段与网络段独立 fetch，首屏 MUST NOT await 网络段）。
  *
  * 服务端注入（D-3）：`__REVIEW_STATE_JSON__` 占位符由 src/routes/review.ts 的
@@ -20,11 +22,20 @@
  * B2 日期（自绘月历组件：预填最近期交易日，可改选/清除——owner 2026-10-05 裁决
  * 弃用原生 date 输入与「待确认」朗读文案；右侧 =「整理」按钮——owner 2026-10-07
  * 裁决自 B3 工具框移入：登记当前标的整理意图并复制固定指令，agent 由 DSH 会话
- * 发送触发，页面不直接点火）、B3 输入（回车保存 + 图片草稿缩略图预览）、
+ * 发送触发，页面不直接点火）；下方 = 思考线条单选行——
+ * owner 2026-10-13：一排单选
+ * pill 为下方卡片打当前思考线条标签，保存时末行追加 #标签，localStorage 保留
+ * 上一次（纯函数见 src/client/review/thread-tag.ts））、B3 输入（回车保存 +
+ * 图片草稿缩略图预览 + 问DeepSeek 鲸鱼图标——owner 2026-10-14 修订：卡片级
+ * 询问，按钮在插图图标旁、与插图入口同款圆形鲸鱼标；提示词 = 当前输入的
+ * 卡片内容 + 标的/题材/涨停（头部事实），不捆绑当日多卡片；纯函数见
+ * src/client/review/ask-deepseek.ts）、
  * B4 当日卡片（时间倒序+纯文本转义+复制 block 引用+warnings 展示）。
  */
 import { parseReviewParams } from './params.ts'
 import { parseImageEmbeds } from '../../review/image-refs.ts'
+import { appendThreadTag, loadThreadTag, saveThreadTag, THREAD_STORAGE_KEY, THREAD_TAGS } from './thread-tag.ts'
+import { buildDeepSeekPrompt, buildDeepSeekUrl, DEEPSEEK_ASK_MAX_CHARS, trimAsk } from './ask-deepseek.ts'
 import { imageDraftError, insertImageEmbed, imagePreviewItems, selectDraftImages, cardImageDate, imageReadIsCurrent, imageDraftBytes } from './image-draft.ts'
 
 /** `window.__REVIEW__` 注入占位符（handler 全量替换，页面模板中恰出现一次）。 */
@@ -54,7 +65,13 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   #rv-code { font-size: 14px; font-weight: 600; color: #e6e6e6; background: #242424; border: 1px solid #3a3a3a; padding: 3px 9px; border-radius: 999px; font-family: "SF Mono", "Fira Code", "Consolas", monospace; margin-right: 10px; }
   #rv-name { color: #ff4d4f; font-size: 20px; font-weight: 700; letter-spacing: 0.5px; margin-right: 10px; }
   .muted { color: #8a8a8a; font-size: 12px; }
-  #rv-concepts { margin-top: 8px; }
+  /* 概念/标签行单行横向滚动（owner 2026-10-14：标签过多换行把 B1 撑高，
+     顶走 B3 输入框——nowrap + overflow-x 保住 B1/B2 高度稳定；全局滚动条
+     为 0 高隐藏，此处按容器覆盖出 4px 可见细滚动条。） */
+  #rv-concepts { margin-top: 8px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; }
+  #rv-concepts::-webkit-scrollbar { height: 4px; }
+  #rv-concepts::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 2px; }
+  #rv-concepts::-webkit-scrollbar-track { background: transparent; }
   #rv-limit { margin-top: 6px; }
   .warnbox { background: #2a2410; border: 1px solid #7a6520; color: #e8d48a; padding: 5px 8px; margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; border-radius: 4px; }
   .tagline { margin-top: 8px; }
@@ -81,9 +98,32 @@ export const REVIEW_HTML = `<!DOCTYPE html>
      不用 flex gap——Chromium 81 兼容） */
   #rv-b2 #rv-organize { vertical-align: middle; margin-left: 6px; }
   #rv-b2 #rv-trade-state { margin-left: 6px; }
+  /* 思考线条单选行（owner 2026-10-13：交易日下方一排单选 pill，为下方卡片打
+     当前思考线条标签——保存时末行追加 #标签，选择记忆在 localStorage 保留
+     上一次（thread-tag.ts）。隐藏原生 radio 但保留键盘可达（整 pill 可点，
+     方向键可换选）；选中态红底发光醒目；nowrap 单行 + 紧凑 pill（12px 字号、
+     收紧内边距）——六项总宽 ≈313px，TDX 窄面板（~490px）单行充裕；
+     <370px 视口会被 body 横向裁切（现役 TDX 面板实测单行）；
+     不用 flex gap——Chromium 81 兼容。） */
+  #rv-thread-row { margin-top: 8px; white-space: nowrap; }
+  .rv-thread { position: relative; display: inline-block; margin: 2px 5px 2px 0; vertical-align: middle; cursor: pointer; }
+  .rv-thread input { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+  .rv-thread-pill { display: inline-block; padding: 3px 7px; border: 1px solid #6b4a1f; border-radius: 999px; background: #221809; color: #ffb84d; font-size: 12px; font-weight: 600; vertical-align: middle; }
+  .rv-thread:hover .rv-thread-pill { border-color: #ffa500; color: #ffa500; }
+  .rv-thread input:checked + .rv-thread-pill { background: #c50e29; border-color: #ff6b6b; color: #ffffff; box-shadow: 0 0 10px rgba(197, 14, 41, 0.9); }
+  .rv-thread input:focus + .rv-thread-pill { outline: 1px dashed #ffa500; outline-offset: 2px; }
   /* 输入区草稿预览（owner 2026-10-07：只渲染已插入图片的缩略图，正文文本不重复渲染） */
   #rv-image-draft { margin-top: 6px; }
   #rv-image-draft .review-image { display: inline-block; max-height: 96px; margin: 0 6px 6px 0; }
+  /* 插入图片入口（owner 2026-10-12：弃文本大按钮——小圆形图标 + hover 原生 title 提示；
+     图标 = 内联 SVG（HTML 解析器自动赋予 SVG 命名空间，无 xmlns URL 字面，离线自包含），
+     stroke 用 currentColor 随按钮色态；B3 静态入口与卡片编辑条共用样式） */
+  .rv-icon-btn { width: 26px; height: 26px; padding: 0; border-radius: 50%; background: #1a1a1a; border: 1px solid #3a3a3a; color: #8a8a8a; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; }
+  .rv-icon-btn:hover { background: #2a2a2a; color: #e6e6e6; border-color: #555555; }
+  .rv-icon-btn:disabled { background: #3a3a3a; border-color: #3a3a3a; cursor: not-allowed; }
+  #rv-image-pick { margin-top: 6px; }
+  #rv-ask-ds { margin-top: 6px; margin-left: 6px; }
+  .card-edit-bar .rv-icon-btn { margin-right: 6px; }
   #rv-cal { position: absolute; left: 0; top: calc(100% + 6px); z-index: 60; width: 252px; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 8px; padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6); }
   .rv-cal-head { display: flex; align-items: center; margin-bottom: 6px; }
   .rv-cal-head button { background: transparent; color: #cccccc; border: 1px solid #3a3a3a; border-radius: 4px; width: 24px; height: 24px; padding: 0; font-size: 13px; line-height: 1; cursor: pointer; margin: 0 2px; }
@@ -161,12 +201,22 @@ export const REVIEW_HTML = `<!DOCTYPE html>
   </div>
   <button type="button" id="rv-organize" disabled title="登记当前标的的整理意图并复制指令——到 DSH 会话粘贴发送">整理</button>
   <span id="rv-trade-state" class="muted"></span>
+  <div id="rv-thread-row" title="当前思考线条——保存时在卡片末行追加对应 #标签（如 #指数），并记住本次选择">
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="指数"><span class="rv-thread-pill">指数</span></label>
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="情绪周期"><span class="rv-thread-pill">情绪周期</span></label>
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="题材"><span class="rv-thread-pill">题材</span></label>
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="赚钱效应"><span class="rv-thread-pill">赚钱效应</span></label>
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="模式"><span class="rv-thread-pill">模式</span></label>
+    <label class="rv-thread"><input type="radio" name="rv-thread" value="盘中"><span class="rv-thread-pill">盘中</span></label>
+  </div>
 </section>
 
 <section id="rv-b3">
   <textarea id="rv-input" placeholder="盘面观察 / 操作思路…（Enter 保存，Shift+Enter 换行）"></textarea>
+  <div class="muted">保存后由 DSH 检测关键词；工作流结果请在 DSH 查看</div>
   <div id="rv-image-draft"></div>
-  <button type="button" id="rv-image-pick">添加图片</button>
+  <button type="button" id="rv-image-pick" class="rv-icon-btn" title="插入图片" aria-label="插入图片"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg></button>
+  <button type="button" id="rv-ask-ds" class="rv-icon-btn" title="问 DeepSeek——以当前输入的卡片内容结合标的、题材、涨停生成提示词，新窗口打开 DeepSeek 并预填（不自动发送；弹窗被拦截时复制提示词）" aria-label="问 DeepSeek"><svg viewBox="0 0 50 50" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M48.8354 10.0479C48.3232 9.79199 48.1025 10.2798 47.8032 10.5278C47.7007 10.6079 47.6143 10.7119 47.5273 10.8076C46.7793 11.624 45.9048 12.1597 44.7622 12.0957C43.0923 12 41.666 12.5356 40.4058 13.8398C40.1377 12.2319 39.2476 11.272 37.8926 10.6558C37.1836 10.3359 36.4668 10.0156 35.9702 9.31982C35.6235 8.82373 35.5293 8.27197 35.356 7.72754C35.2456 7.3999 35.1353 7.06396 34.7651 7.00781C34.3633 6.94385 34.2056 7.2876 34.0479 7.57568C33.418 8.75195 33.1733 10.0479 33.1973 11.3599C33.2524 14.312 34.4736 16.6641 36.8999 18.3359C37.1758 18.5278 37.2466 18.7197 37.1597 19C36.9946 19.5757 36.7974 20.1357 36.624 20.7119C36.5137 21.0801 36.3486 21.1597 35.9624 21C34.6309 20.4321 33.481 19.5918 32.4644 18.5757C30.7393 16.8721 29.1792 14.9917 27.2334 13.52C26.7764 13.1758 26.3193 12.856 25.8467 12.5518C23.8618 10.584 26.1069 8.96777 26.627 8.77588C27.1704 8.57568 26.8159 7.8877 25.0591 7.896C23.3022 7.90381 21.6953 8.50391 19.647 9.30371C19.3477 9.42383 19.0322 9.51172 18.7095 9.58398C16.8501 9.22363 14.9199 9.14355 12.9033 9.37598C9.10596 9.80762 6.07275 11.6396 3.84326 14.7681C1.16455 18.5278 0.53418 22.7998 1.30664 27.2559C2.11768 31.9521 4.46582 35.8398 8.07373 38.8799C11.8159 42.0322 16.1255 43.5762 21.041 43.2803C24.0269 43.104 27.3516 42.6963 31.1016 39.4561C32.0469 39.936 33.0396 40.1279 34.686 40.272C35.9546 40.3921 37.1758 40.208 38.1211 40.0078C39.6021 39.688 39.4995 38.2881 38.9639 38.0322C34.623 35.9678 35.5762 36.8081 34.71 36.1279C36.9155 33.4639 40.2402 30.6958 41.54 21.728C41.6426 21.0161 41.5557 20.5679 41.54 19.9917C41.5322 19.6396 41.6108 19.5039 42.0049 19.4639C43.0923 19.3359 44.1479 19.0317 45.1167 18.4878C47.9292 16.9199 49.064 14.3438 49.3315 11.2559C49.3711 10.7837 49.3237 10.2959 48.8354 10.0479ZM24.3262 37.8398C20.1196 34.4639 18.0791 33.3521 17.2358 33.3999C16.4482 33.4482 16.5898 34.3682 16.7632 34.9678C16.9443 35.5601 17.1812 35.9683 17.5117 36.4878C17.7402 36.832 17.8979 37.3442 17.2832 37.728C15.9282 38.584 13.5728 37.4399 13.4624 37.3838C10.7207 35.7358 8.42822 33.5601 6.81348 30.584C5.25342 27.7197 4.34766 24.6479 4.19775 21.3677C4.1582 20.5757 4.38672 20.2959 5.15869 20.1519C6.17529 19.96 7.22314 19.9199 8.23926 20.0718C12.5327 20.7119 16.1885 22.6719 19.2529 25.7759C21.002 27.5439 22.3252 29.6558 23.6885 31.7202C25.1377 33.9121 26.6978 36 28.6831 37.7119C29.3843 38.312 29.9434 38.7681 30.479 39.104C28.8643 39.2881 26.1699 39.3281 24.3262 37.8398ZM26.3433 24.6001C26.3433 24.248 26.6191 23.9678 26.9658 23.9678C27.0444 23.9678 27.1152 23.9839 27.1782 24.0078C27.2651 24.04 27.3438 24.0879 27.4067 24.1602C27.5171 24.272 27.5801 24.4321 27.5801 24.6001C27.5801 24.9521 27.3042 25.2319 26.9575 25.2319C26.6108 25.2319 26.3433 24.9521 26.3433 24.6001ZM32.6064 27.8799C32.2046 28.0479 31.8027 28.1919 31.4165 28.208C30.8179 28.2397 30.1641 27.9922 29.8096 27.688C29.2583 27.2158 28.8643 26.9521 28.6987 26.1279C28.6279 25.7759 28.6675 25.2319 28.7305 24.9199C28.8721 24.248 28.7144 23.8159 28.2495 23.4238C27.8716 23.104 27.3911 23.0161 26.8633 23.0161C26.666 23.0161 26.4849 22.9277 26.3511 22.856C26.1304 22.7441 25.9492 22.4639 26.1226 22.1201C26.1777 22.0078 26.4458 21.7358 26.5088 21.688C27.2256 21.272 28.0527 21.4077 28.8169 21.7197C29.5259 22.0161 30.0615 22.5601 30.834 23.3281C31.6216 24.2559 31.7632 24.5117 32.2124 25.208C32.5669 25.752 32.8901 26.312 33.1104 26.9521C33.2446 27.3521 33.0713 27.6802 32.6064 27.8799Z"></path></svg></button>
   <div><span id="rv-status" class="muted"></span></div>
   <div id="rv-readonly-hint" class="warnbox" style="display:none">写卡不可用：A 层认证未生效——请在 DSH 会话侧写卡，或先经登录 URL 完成两步登录。</div>
 </section>
@@ -196,6 +246,21 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   var imageReadIsCurrent = ${imageReadIsCurrent};
   var imageDraftBytes = ${imageDraftBytes};
 
+  // 思考线条（owner 2026-10-13）：候选与「保留上一次」键为常量注入，行为函数与单测同一实现。
+  var THREAD_TAGS = ${JSON.stringify(THREAD_TAGS)};
+  var THREAD_STORAGE_KEY = ${JSON.stringify(THREAD_STORAGE_KEY)};
+  var appendThreadTag = ${appendThreadTag};
+  var loadThreadTag = ${loadThreadTag};
+  var saveThreadTag = ${saveThreadTag};
+
+  // 问 DeepSeek（owner 2026-10-13）：提示词组装与 URL 构造与单测同一实现；预算常量
+  // 注入。origin 由页面拼接构造（REVIEW_HTML 无 http(s):// 外链字面纪律——同 treeid
+  // 先例；跳转目标是用户主动导航，非资源加载），真实 origin 字面只出现在测试内。
+  var DEEPSEEK_ASK_MAX_CHARS = ${JSON.stringify(DEEPSEEK_ASK_MAX_CHARS)};
+  var trimAsk = ${trimAsk};
+  var buildDeepSeekPrompt = ${buildDeepSeekPrompt};
+  var buildDeepSeekUrl = ${buildDeepSeekUrl};
+
   var state = window.__REVIEW__ || {};
   var basePath = typeof state.basePath === 'string' && state.basePath !== '' ? state.basePath : '/dsh-trader-kit';
   var routePath = basePath + '/review';
@@ -212,20 +277,39 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   var nameLocal = null;          // 本地段名称层 {value, nameSource}
   var enrichName = null;         // 网络段层②补位 {name, source}（仅 code-only 时消费）
   var lastLocal = null;          // 最近一次 /api/local 响应
-  var draftOwnerCode = null;     // 输入的来源标的（首次输入时固化，D-11）
+  var draftOwnerCode = null;     // 输入的来源市场代码（首次输入时固化，D-11）
   var pendingOwner = null;       // 联动切换未确认 {from, to}
   var pendingRequestId = null;   // 提交意图标识（失败重试复用同一 id）
   var enrichGen = 0;             // 网络段代际（切换即作废在途响应）
   var enrichController = null;   // 网络段 AbortController
   var enrichRenderedFor = null;  // 最近一次 enrich 渲染所属标的（B1 清空保留判定——owner 2026-10-05）
+  var contextGen = 0;            // 本地、网络与指数共享的上下文代际
+  var localFlight = null;
+  var localController = null;
+  var localNeedsRead = false;
+  var indexController = null;
+  var indexRequestedGen = -1;
+  var indexName = null;
+  var localReady = {};
+  var retryTask = null;
+  var retryAttempt = 0;
+  var retryElapsed = 0;
+  var retryStarted = 0;
+  var pageClosed = false;
+  var retryScheduler = state.localRetryScheduler || { schedule: setTimeout, cancel: clearTimeout };
   var draftImages = { items: [], reserved: 0, active: true, generation: 0, owner: null };
   var editImageDrafts = [];
   var imageSequence = 0;
   var imageContextGeneration = 0;
   var composing = false;         // 输入法组合期
+  var threadTag = null;          // 当前思考线条（owner 2026-10-13；null = 未选，保存不加标签；跨标的与会话保留上一次）
 
   function byId(id) { return document.getElementById(id); }
   function trim(v) { return v.replace(/^\\s+|\\s+$/g, ''); }
+  function threadStorage() {
+    // 取属性本身也可能抛 SecurityError（沙箱 iframe）——取值与读写都收进 try。
+    try { return window.localStorage; } catch (e) { return null; }
+  }
 
   // ── 形态判定（owner 2026-10-06 两轮裁决）：
   // ① 外部指数态 = 显式沪市 + 000xxx（中证指数段，与深市股票同码不同品种）——
@@ -235,10 +319,17 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   //    行情尝试 S10（880 显式不可得、999999 经别名有真行情），S7/S5/S8 enrich 跳过。──
   // 指数页（含自制指标/显示码/显式沪市中证指数段）：一律可写「关键判断」卡；
   // 差异仅在取数面（enrich 跳过）与行情来源（S10）。
+  /**
+   * 判断指数及领域锚点页。
+   * 业务逻辑: 结合市场和代码识别指数、基金及通达信领域码。
+   * 关键判断: 显式市场优先，避免同码深市股票误走沪市指数通道。
+   * 异常处理: 无有效代码返回false。参数: 无。返回: 是否采用指数通道。
+   */
   function isIndexPage() {
     if (currentCode === null) return false;
-    if (/^88/.test(currentCode)) return true;
-    if (currentCode === '999999') return true;
+    var market = currentMarket !== null ? currentMarket : inferMarket(currentCode);
+    if (market === 'sh' && /^88/.test(currentCode)) return true;
+    if (market === 'sh' && currentCode === '999999') return true;
     if (currentMarket === 'sh' && /^000/.test(currentCode)) return true;
     if (currentMarket === 'sh' && /^5/.test(currentCode)) return true; // 沪市基金/ETF（锚点族）
     return false;
@@ -296,6 +387,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   // ── B1 渲染 ─────────────────────────────────────────────────────────────
+  /**
+   * 更新标的名称。
+   * 业务逻辑: 档案领域名、档案名称、指数行情名、网络补位依次取首个可用值。
+   * 关键判断: 本地补读不抹掉已取得的指数名称。
+   * 异常处理: 名称缺失显示名称未获取。参数: 无。返回: 无。
+   */
   function updateNameLine() {
     var el = byId('rv-name');
     if (isTdxAnchor() && currentAnchor !== null && currentAnchor.name) {
@@ -306,6 +403,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (nameLocal !== null && nameLocal.value !== null && nameLocal.value !== '') {
       // 层①命中：网络段（层②）MUST NOT 覆盖（§12.4）。
       effective = nameLocal.value;
+    } else if (indexName !== null && isIndexPage()) {
+      effective = indexName;
     } else if (enrichName !== null && enrichName.name) {
       // 层②补位：仅当本地段为 code-only。来源标注（T2-S8 等）保留在 API 响应，
       // 页面不展示（owner 2026-10-05：「这是什么」——简化显示）。
@@ -315,6 +414,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     el.textContent = effective !== null ? effective : '名称未获取';
   }
 
+  /**
+   * 更新标的头部。
+   * 业务逻辑: 展示市场代码、名称与整理入口，保持已有网络及指数展示。
+   * 关键判断: 指数角色仅由档案分区更新，切换上下文统一清理旧展示。
+   * 异常处理: 非法代码显示原始参数。参数: 无。返回: 无。
+   */
   function renderB1() {
     var codeEl = byId('rv-code');
     if (currentCode !== null) codeEl.textContent = currentQualified();
@@ -324,11 +429,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     //（spike 决策①的 treeid 通道保留在文档与后续场景：页面外联动时再启用）。
     // 标签/涨停原因 = enrich 段渲染内容：同一标的的本地段静默回读（保存/编辑/删除后）
     // MUST NOT 清空不补（owner 2026-10-05 反馈）；仅标的切换（renderedFor 不一致）才清空。
-    if (enrichRenderedFor !== currentCode) {
+    if (enrichRenderedFor !== currentCode && currentCode === null) {
       byId('rv-concepts').textContent = '';
       byId('rv-limit').textContent = '';
     }
     byId('rv-organize').disabled = !writable || currentCode === null; // 指数/锚点页可整理（关键判断载体）
+    byId('rv-ask-ds').disabled = currentCode === null; // 问DeepSeek 为只读动作：只要求有效标的（只读态可用）
     updateNameLine();
   }
 
@@ -468,10 +574,13 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
    * 参数: 无，读取日期框。返回: 无。
    */
   function applyDateChange() {
-    imageContextGeneration += 1;
     var v = byId('rv-date').value;
+    if (datePicked === (v !== '') && currentDate === (v !== '' ? v : null)) return;
+    invalidateReads();
+    imageContextGeneration += 1;
     datePicked = v !== '';
     currentDate = datePicked ? v : null;
+    resetReadDisplay();
     if (pendingOwner === null) hideOwnerConfirm();
     loadLocal(false);
     loadEnrich(); // 切日期同步重跑网络段：B1 标签/涨停原因按新日期补位，MUST NOT 清空不补（2026-10-05）
@@ -562,6 +671,18 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     b.type = 'button';
     b.className = 'card-action';
     b.textContent = text;
+    return b;
+  }
+
+  /**
+   * 创建「插入图片」圆形图标按钮（owner 2026-10-12：弃文本大按钮）。
+   * 业务逻辑: 克隆 B3 静态入口，图标与 title/aria-label 随模板走，B3 与卡片编辑条共用同一样式。
+   * 关键判断: 经 cloneNode 复制布点（监听不随克隆，由 wireImageEditor 重挂）；去 id 保持文档唯一。
+   * 参数: 无。返回: 图标按钮。
+   */
+  function makeImagePickBtn() {
+    var b = byId('rv-image-pick').cloneNode(true);
+    b.removeAttribute('id');
     return b;
   }
 
@@ -683,7 +804,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
           var inserted = insertImageEmbed(ta.value, ta.selectionStart, ta.selectionEnd, relativePath);
           ta.value = inserted.body;
           ta.selectionStart = ta.selectionEnd = inserted.cursor;
-          if (ta === byId('rv-input') && draftOwnerCode === null) draftOwnerCode = currentCode;
+          if (ta === byId('rv-input') && draftOwnerCode === null) draftOwnerCode = currentQualified();
           renderDraftPreview(preview, ta.value, draft);
           ta.focus();
         };
@@ -765,7 +886,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     var save = makeActionBtn('保存编辑');
     save.className = 'card-action primary';
     var cancel = makeActionBtn('取消');
-    var imagePick = makeActionBtn('添加图片');
+    var imagePick = makeImagePickBtn();
     var preview = document.createElement('div');
     var editDraft = { items: [], reserved: 0, active: true, generation: 0 };
     editImageDrafts.push(editDraft);
@@ -781,14 +902,23 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     bodyEl.style.display = 'none';
     div.insertBefore(ta, bodyEl);
     div.insertBefore(bar, bodyEl);
-    cancel.addEventListener('click', function () {
+    /**
+     * 退出当前卡片编辑。
+     * 业务逻辑: 保存成功及取消共用预览释放、编辑节点移除与正文恢复。
+     * 关键判断: 回读正文未变化也必须退出，仅移除当前卡片的编辑节点。
+     * 异常处理: 已退出时忽略，避免迟到保存回调重复移除。
+     * 参数: 无。返回: 无。
+     */
+    function finishEdit() {
+      if (div.__rvEditing !== true) return;
       editDraft.active = false;
       clearImageDraft(editDraft);
       div.__rvEditing = false;
       div.removeChild(ta);
       div.removeChild(bar);
       bodyEl.style.display = '';
-    });
+    }
+    cancel.addEventListener('click', finishEdit);
     save.addEventListener('click', function () {
       if (editDraft.reserved) { setStatus('图片正在读取，请稍后保存'); return; }
       var next = ta.value;
@@ -800,10 +930,9 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       cancel.disabled = true;
       postCardApi('/update', { anchor: card.anchor, body: next, images: selectDraftImages(next, editDraft.items, parseImageEmbeds) }, function (r) {
         if (r.status === 200 && r.body && r.body.status === 'updated') {
-          editDraft.active = false;
-          clearImageDraft(editDraft);
+          finishEdit();
           setStatus('已保存编辑');
-          loadLocal(true); // 静默回读：退出编辑态并渲染新正文（warnings 一并刷新）
+          loadLocal(true); // 静默回读新正文与warnings，未变化卡片保留DOM
         } else {
           save.disabled = false;
           ta.disabled = false;
@@ -927,7 +1056,113 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   }
 
   // ── 本地段（/api/local；首屏不等待网络段）──────────────────────────────────
+  /**
+   * 取消当前渐进补读。
+   * 业务逻辑: 释放已排队任务；关键判断: 不影响已取得内容。
+   * 异常处理: 无任务时忽略。参数: 无。返回: 无。
+   */
+  function cancelLocalRetry() {
+    if (retryTask !== null) retryScheduler.cancel(retryTask);
+    retryTask = null;
+  }
+
+  /**
+   * 作废全部读请求。
+   * 业务逻辑: 推进统一代际并中断三条读取通道及补读。
+   * 关键判断: 用户切换日期或标的才推进，自动回填保持当前网络响应有效。
+   * 异常处理: 中断失败由代际检查兜底。参数: 无。返回: 无。
+   */
+  function invalidateReads() {
+    contextGen += 1;
+    enrichGen += 1;
+    cancelLocalRetry();
+    var controllers = [localController, enrichController, indexController];
+    for (var i = 0; i < controllers.length; i++) {
+      if (controllers[i] !== null) { try { controllers[i].abort(); } catch (e) { /* 代际兜底 */ } }
+    }
+    localFlight = null;
+    localNeedsRead = false;
+    retryAttempt = 0;
+    retryElapsed = 0;
+    retryStarted = 0;
+    localReady = {};
+  }
+
+  /**
+   * 同步展示新上下文的占位。
+   * 业务逻辑: 清旧卡、行情、角色、警告和名称，立即显示新代码。
+   * 关键判断: 草稿及其归属不变。异常处理: 未定标的保留参数指引。
+   * 参数: 无。返回: 无。
+   */
+  function resetReadDisplay() {
+    lastLocal = null;
+    nameLocal = null;
+    enrichName = null;
+    indexName = null;
+    currentAnchor = null;
+    enrichRenderedFor = null;
+    renderB1();
+    renderQuote(null);
+    renderWarnings([]);
+    renderCards([]);
+    if (currentCode !== null) byId('rv-empty').textContent = '卡片加载中…';
+    byId('rv-concepts').textContent = '';
+    byId('rv-limit').textContent = '';
+    byId('rv-trade-state').textContent = '';
+    setStatus('');
+  }
+
+  /**
+   * 回填自动归属日期。
+   * 业务逻辑: 真正改变日期后回读该日卡片；在途本地段完成后串行补读。
+   * 关键判断: 显式选日不覆盖，相同日期不增加请求，不推进网络代际。
+   * 异常处理: 缺日期忽略。参数: date 为事实交易日。返回: 是否改变日期。
+   */
+  function adoptTradeDate(date) {
+    if (datePicked || !date || date === currentDate) return false;
+    currentDate = date;
+    byId('rv-date').value = date;
+    localReady.cards = false;
+    renderCards([]);
+    byId('rv-empty').textContent = '卡片加载中…';
+    if (localFlight !== null) localNeedsRead = true;
+    else loadLocal(true);
+    return true;
+  }
+
+  /**
+   * 安排有界串行补读。
+   * 业务逻辑: 依次延迟250、500、1000、2000毫秒，此后每2000毫秒补读。
+   * 关键判断: 总等待最多30秒，切换或页面关闭不再执行。
+   * 异常处理: 超时保留已取得内容并提示刷新。参数: gen 为所属代际。返回: 无。
+   */
+  function scheduleLocalRetry(gen) {
+    cancelLocalRetry();
+    if (pageClosed || gen !== contextGen) return;
+    if (!retryStarted) retryStarted = Date.now();
+    var elapsed = Math.max(retryElapsed, Date.now() - retryStarted);
+    if (elapsed >= 30000) { setStatus('部分数据仍在加载，请刷新重试'); return; }
+    var delays = [250, 500, 1000];
+    var delay = Math.min(retryAttempt < delays.length ? delays[retryAttempt] : 2000, 30000 - elapsed);
+    retryAttempt += 1;
+    retryTask = retryScheduler.schedule(function () {
+      retryTask = null;
+      if (pageClosed || gen !== contextGen) return;
+      retryElapsed += delay;
+      if (Math.max(retryElapsed, Date.now() - retryStarted) >= 30000) { setStatus('部分数据仍在加载，请刷新重试'); return; }
+      loadLocal(true);
+    }, delay);
+  }
+
+  /**
+   * 渐进读取本地复盘资料。
+   * 业务逻辑: 同上下文在途合并，按就绪分区更新，loading保留已取得内容。
+   * 关键判断: 三通道共享代际，旧契约缺loadState视为ready，日期实际改变才补读。
+   * 异常处理: 中断静默，传输失败显示错误，pending有界重试。
+   * 参数: silent 控制首次加载状态。返回: 在途Promise或空。
+   */
   function loadLocal(silent) {
+    if (pageClosed) return;
     if (currentCode === null) {
       setMode('empty');
       renderB1();
@@ -938,43 +1173,94 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     }
     // owner 2026-10-06 修订：指数（含同码冲突家族 000001 等）与锚点同为「关键判断
     // 载体」——一律走正常本地流（卡片可写/可读/可编辑），行情经 S10、enrich 跳过。
-    currentAnchor = null; // 复位（锚点/指数档案名由下方响应重建）
+    if (localFlight !== null) return localFlight;
+    cancelLocalRetry();
     if (!silent) setMode('loading');
-    fetchJson(apiUrl('/review/api/local', { code: currentCode, date: currentDate, market: currentMarket })).then(function (r) {
+    var gen = contextGen;
+    var requestedDate = currentDate;
+    localController = new AbortController();
+    localFlight = fetchJson(apiUrl('/review/api/local', { code: currentCode, date: currentDate, market: currentMarket }), { signal: localController.signal }).then(function (r) {
+      if (gen !== contextGen || pageClosed) return;
+      localFlight = null;
       if (r.status !== 200) {
-        if (!silent) setMode('error', '本地段加载失败：HTTP ' + r.status + ' ' + describeError(r.body));
+        setMode('error', '本地段加载失败：HTTP ' + r.status + ' ' + describeError(r.body));
         return;
       }
-      lastLocal = r.body;
-      nameLocal = r.body.name || null;
-      // 锚点领域档（owner 2026-10-06）：名称/角色来自 stock 档案区 档案——领域归类展示。
-      currentAnchor = r.body.anchor !== null && r.body.anchor !== undefined
-        && r.body.anchor.name !== null && r.body.anchor.name !== undefined
-        ? { name: r.body.anchor.name, role: r.body.anchor.role, isAnchor: r.body.anchor.isAnchor === true }
-        : null;
-      if (!datePicked && r.body.date !== null && r.body.date !== undefined) {
-        currentDate = r.body.date;
-        if (byId('rv-date').value === '') byId('rv-date').value = r.body.date;
+      var body = r.body;
+      var states = body.loadState || {};
+      var previous = lastLocal;
+      var merged = previous || {};
+      var pending = false;
+      var failed = false;
+      var sameDate = requestedDate === currentDate || body.date === currentDate;
+      if (!datePicked && !currentDate && body.date) {
+        currentDate = body.date;
+        byId('rv-date').value = body.date;
+        sameDate = true;
       }
-      renderB1();
-      renderTradeState();
-      renderAnchorRole();
-      renderWarnings(r.body.warnings);
-      renderCards(r.body.cards);
+      if (states.profile !== 'loading' && states.profile !== 'error') {
+        nameLocal = body.name || null;
+        currentAnchor = body.anchor && body.anchor.name !== null && body.anchor.name !== undefined
+          ? { name: body.anchor.name, role: body.anchor.role, isAnchor: body.anchor.isAnchor === true } : null;
+        if (!localReady.profile || JSON.stringify([merged.name, merged.anchor]) !== JSON.stringify([body.name, body.anchor])) {
+          merged.name = body.name; merged.anchor = body.anchor;
+          renderB1();
+          if (isTdxAnchor()) renderAnchorRole();
+        }
+        localReady.profile = true;
+      }
+      if (states.tradeDate !== 'loading' && states.tradeDate !== 'error' && sameDate) {
+        var tradeChanged = !localReady.tradeDate || JSON.stringify([merged.date, merged.dateSource, merged.tradeDate]) !== JSON.stringify([body.date, body.dateSource, body.tradeDate]);
+        merged.date = body.date; merged.dateSource = body.dateSource; merged.tradeDate = body.tradeDate;
+        lastLocal = merged;
+        if (tradeChanged) renderTradeState();
+        localReady.tradeDate = true;
+      }
+      if (states.cards !== 'loading' && states.cards !== 'error' && sameDate) {
+        if (!localReady.cards || JSON.stringify(merged.cards) !== JSON.stringify(body.cards)) renderCards(body.cards);
+        merged.cards = body.cards;
+        localReady.cards = true;
+      } else if (!localReady.cards) byId('rv-empty').textContent = states.cards === 'error' ? '卡片加载失败，请刷新重试' : '卡片加载中…';
+      if (JSON.stringify(merged.warnings) !== JSON.stringify(body.warnings)) renderWarnings(body.warnings);
+      merged.warnings = body.warnings;
+      lastLocal = merged;
+      var parts = ['profile', 'tradeDate', 'history', 'cards'];
+      for (var i = 0; i < parts.length; i++) { pending = pending || states[parts[i]] === 'loading'; failed = failed || states[parts[i]] === 'error'; }
       if (!silent) setMode('idle');
-      if (r.body.error) setStatus(r.body.message || '');
+      if (body.error || failed) setStatus(body.message || '部分本地数据加载失败，请刷新重试');
       if (isTdxAnchor()) loadIndexQuote(); // 锚点行情（880 显式消息 / 999999 真行情）
+      if (localNeedsRead && !sameDate) { localNeedsRead = false; loadLocal(true); }
+      else {
+        localNeedsRead = false;
+        if (pending) scheduleLocalRetry(gen);
+        else { cancelLocalRetry(); retryAttempt = 0; retryElapsed = 0; retryStarted = 0; }
+      }
     }, function (e) {
-      if (!silent) setMode('error', '本地段加载失败：' + String(e));
+      if (gen !== contextGen || pageClosed) return;
+      localFlight = null;
+      if (e && e.name === 'AbortError') return;
+      setMode('error', '本地段加载失败：' + String(e));
     });
+    return localFlight;
   }
 
   // ── 指数态行情（owner 2026-10-06 追授：/api/index-quote 同源取数，S10 腾讯指数
   // 源；名称行与现价格由该响应填充，市值/股本对指数不适用保持 '--'）────────────
+  /**
+   * 获取当前指数行情。
+   * 业务逻辑: 每个上下文请求一次，行情名供后续本地补位复用，交易日补位回读卡片。
+   * 关键判断: 市场或日期切换即作废，自动归属日不重复获取指数行情。
+   * 异常处理: 传输和中断静默，业务不可用显示来源信息。
+   * 参数: 无。返回: 无。
+   */
   function loadIndexQuote() {
+    if (pageClosed || !isIndexPage() || indexRequestedGen === contextGen) return;
+    indexRequestedGen = contextGen;
+    var gen = contextGen;
     var code = currentCode;
-    fetchJson(apiUrl('/review/api/index-quote', { code: code })).then(function (r) {
-      if (currentCode !== code || (!isIndexPage() && !isTdxAnchor())) return; // 已切走——丢弃
+    indexController = new AbortController();
+    fetchJson(apiUrl('/review/api/index-quote', { code: code, market: currentMarket }), { signal: indexController.signal }).then(function (r) {
+      if (gen !== contextGen || pageClosed) return;
       if (r.status !== 200) {
         byId('rv-limit').textContent = '指数行情：不可用（HTTP ' + r.status + '）';
         return;
@@ -982,13 +1268,12 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       var q = r.body;
       // 交易日定位（owner 2026-10-06：指数/锚点态与股票页同一 T0 事实源——日期框回填）。
       if (!datePicked && q.tradeDate && q.tradeDate.value) {
-        currentDate = q.tradeDate.value;
-        if (byId('rv-date').value === '') byId('rv-date').value = q.tradeDate.value;
+        adoptTradeDate(q.tradeDate.value);
       }
       if (q.available === true) {
         // 名称优先级：档案名（local 段已填）> S10 行情名 > 层③（名称未获取）。
-        var hasProfileName = isTdxAnchor() && currentAnchor !== null && currentAnchor.name;
-        if (!hasProfileName) byId('rv-name').textContent = q.name || '指数';
+        indexName = q.name || '指数';
+        updateNameLine();
         var priceEl = byId('rv-qp-price');
         priceEl.className = 'qp-value ' + (q.pct !== null && q.pct > 0 ? 'up' : (q.pct !== null && q.pct < 0 ? 'down' : ''));
         priceEl.textContent = (q.price !== null ? q.price.toFixed(2) : '--') + (q.pct !== null && q.pct !== undefined ? '  ' + (q.pct > 0 ? '+' : '') + q.pct.toFixed(2) + '%' : '');
@@ -1068,13 +1353,18 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     box.appendChild(body);
   }
 
+  /**
+   * 渲染网络补位。
+   * 业务逻辑: 补位交易日、名称、行情、标签和涨停原因。
+   * 关键判断: 自动日期变化仅补读本地，显式选日不覆盖，档案名优先。
+   * 异常处理: 缺失行情及标签显示不可用占位。
+   * 参数: data 为同上下文网络响应。返回: 无。
+   */
   function renderEnrich(data) {
     enrichRenderedFor = currentCode; // 渲染归属当前标的（后续本地回读不清空——owner 2026-10-05）
     // B2 默认归属日补位（仅当用户未显式选日）。
-    if (!datePicked && data.tradeDate !== null && data.tradeDate !== undefined && data.tradeDate.value !== null && byId('rv-date').value === '') {
-      currentDate = data.tradeDate.value;
-      byId('rv-date').value = data.tradeDate.value;
-      loadLocal(true);
+    if (!datePicked && data.tradeDate !== null && data.tradeDate !== undefined && data.tradeDate.value !== null) {
+      adoptTradeDate(data.tradeDate.value);
     }
     updateTradeStateFromEnrich(data.tradeDate);
     // 名称层②补位：仅当本地段为 code-only（层①命中不覆盖）。
@@ -1107,21 +1397,29 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     renderLimitBox(lr !== null && lr !== undefined ? lr : { text: null });
   }
 
+  /**
+   * 请求股票网络补位。
+   * 业务逻辑: 股票页并行读取网络段，新的请求中断旧请求。
+   * 关键判断: 统一上下文与请求代际均匹配才渲染，指数页跳过。
+   * 异常处理: 中断静默，真实失败展示不可用信息。
+   * 参数: 无。返回: 无。
+   */
   function loadEnrich() {
-    if (currentCode === null || isIndexPage() || isTdxAnchor()) return; // 指数/锚点态不取数（错配与无谓预算）
+    if (pageClosed || currentCode === null || isIndexPage() || isTdxAnchor()) return; // 指数/锚点态不取数（错配与无谓预算）
     enrichGen += 1; // 代际推进：旧响应到达即丢弃
     if (enrichController !== null) {
       try { enrichController.abort(); } catch (e) { /* 忽略 */ }
     }
     var gen = enrichGen;
+    var ctx = contextGen;
     enrichController = new AbortController();
     setEnrichPending();
-    fetchJson(apiUrl('/review/api/enrich', { code: currentCode, date: currentDate }), { signal: enrichController.signal }).then(function (r) {
-      if (gen !== enrichGen) return; // 已切换标的/日期——结果不写入新标的展示区
+    fetchJson(apiUrl('/review/api/enrich', { code: currentCode, date: currentDate, market: currentMarket }), { signal: enrichController.signal }).then(function (r) {
+      if (gen !== enrichGen || ctx !== contextGen || pageClosed) return; // 已切换标的/日期——结果不写入新标的展示区
       if (r.status !== 200) { renderEnrichUnavailable('HTTP ' + r.status + ' ' + describeError(r.body)); return; }
       renderEnrich(r.body);
     }, function (e) {
-      if (gen !== enrichGen) return;
+      if (gen !== enrichGen || ctx !== contextGen || pageClosed || (e && e.name === 'AbortError')) return;
       renderEnrichUnavailable(String(e));
     });
   }
@@ -1144,34 +1442,33 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
    * 参数: code归一代码、raw原值、market显式市场。返回: 无。
    */
   function switchContext(code, raw, market) {
+    invalidateReads();
     imageContextGeneration += 1;
     currentCode = code;
     currentRaw = raw;
     currentMarket = market === undefined ? null : market;
-    enrichGen += 1;
-    if (enrichController !== null) {
-      try { enrichController.abort(); } catch (e) { /* 忽略 */ }
-    }
-    nameLocal = null;
-    enrichName = null;
-    lastLocal = null;
-    enrichRenderedFor = null; // 标的切换：enrich 渲染归属作废，B1 清空重取
-    currentAnchor = null;     // 标的切换：锚点领域档复位
     datePicked = false;
     currentDate = null;
     byId('rv-date').value = '';
-    byId('rv-warnings').textContent = '';
     setMode('idle');
+    resetReadDisplay();
     loadLocal(false);
     loadEnrich();
   }
 
+  /**
+   * 接收标的联动并保护草稿归属。
+   * 业务逻辑: 市场代码变化时提示确认，再加载新标的展示。
+   * 关键判断: 同六位代码跨市场也属于另一资产，省略市场使用既有推断。
+   * 异常处理: 非法目标不重定草稿归属。参数: code代码、raw原值、market市场。返回: 无。
+   */
   function onNavTargetChange(code, raw, market) {
     var inputEl = byId('rv-input');
     var hasDraft = trim(inputEl.value) !== '';
-    if (hasDraft && draftOwnerCode !== null && code !== null && draftOwnerCode !== code) {
+    var target = code === null ? null : (market === null || market === undefined ? inferMarket(code) : market) + code;
+    if (hasDraft && draftOwnerCode !== null && target !== null && draftOwnerCode !== target) {
       // 联动切换保护（D-11）：不静默换归属——确认前提交被拒。
-      pendingOwner = { from: draftOwnerCode, to: code };
+      pendingOwner = { from: draftOwnerCode, to: target };
       showOwnerConfirm();
     } else {
       pendingOwner = null;
@@ -1213,6 +1510,8 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     var text = inputEl.value;
     if (imageDraftBytes(text, draftImages.items, 0, parseImageEmbeds) > 20 * 1024 * 1024) { setStatus('本次图片总量最大 20MiB，请减少图片引用'); return; }
     if (trim(text) === '') { setMode('error', '内容为空——请先输入'); return; }
+    // owner 2026-10-13：末行追加思考线条标签（正文已含同名标签时幂等跳过——失败重试复跑结果不变）。
+    var finalBody = appendThreadTag(text, threadTag);
     if (pendingOwner !== null) {
       setMode('error', '未提交内容属于 ' + pendingOwner.from + '——请先点击「确认归属到 ' + pendingOwner.to + '」再保存');
       return;
@@ -1220,10 +1519,10 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (pendingRequestId === null) pendingRequestId = newRequestId();
     var payload = {
       code: currentCode,
-      body: text,
+      body: finalBody,
       clientRequestId: pendingRequestId,
       tradeDate: currentDate,
-      images: selectDraftImages(text, draftImages.items, parseImageEmbeds),
+      images: selectDraftImages(finalBody, draftImages.items, parseImageEmbeds),
     };
     if (currentMarket !== null) payload.market = currentMarket; // 显式市场（URL 前缀）优先于推断
     if (lastLocal !== null && lastLocal.name !== null && lastLocal.name !== undefined
@@ -1248,7 +1547,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
         draftOwnerCode = null;
         pendingRequestId = null;
         setMode('idle');
-        if (r.body.anchor) prependCard({ anchor: r.body.anchor, writtenAt: r.body.writtenAt || '', body: text });
+        if (r.body.anchor) prependCard({ anchor: r.body.anchor, writtenAt: r.body.writtenAt || '', body: finalBody });
         if (payload.images.length) loadLocal(true);
         renderWarnings(r.body.warnings);
         setStatus('已保存 ^' + r.body.anchor);
@@ -1279,7 +1578,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
   byId('rv-image-close').addEventListener('click', function () { byId('rv-image-dialog').style.display = 'none'; byId('rv-image-original').removeAttribute('src'); });
   inputEl.addEventListener('input', function () {
     if (draftOwnerCode === null && currentCode !== null && trim(inputEl.value) !== '') {
-      draftOwnerCode = currentCode; // 首次输入固化来源标的
+      draftOwnerCode = currentQualified(); // 首次输入固化来源市场代码
     }
     if (mode === 'error') setMode('idle');
   });
@@ -1324,6 +1623,58 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
       btn.disabled = !writable || currentCode === null;
     });
   });
+  // ── B3「问DeepSeek」鲸鱼图标（owner 2026-10-13 追授；2026-10-14 修订：卡片级
+  // 询问 + 迁到插图图标旁）：以当前输入的卡片内容结合标的/题材/涨停（B1 头部事实）
+  // 组装提示词，window.open 新窗口打开 DS web 根路径并以 q 参数预填（不自动发送；
+  // 图片不传递——预填契约无图片通道）。origin 拼接构造保持无外链字面纪律（同
+  // treeid 先例）。window.open 返回 null 降级为复制提示词：TDX 内嵌拦截（spike
+  // 实测 0/6）与 DSH 壳 deny+openExternal（默认浏览器已打开）都返回 null，页内
+  // 无法区分，故提示词按「未自动打开时的兜底」口径书写。────────────────────────
+  var dsOrigin = 'https:' + '//chat.deepseek.com';
+  byId('rv-ask-ds').addEventListener('click', function () {
+    if (currentCode === null) return;
+    var nameText = trim(byId('rv-name').textContent);
+    var labels = [];
+    var chips = byId('rv-concepts').querySelectorAll('.tag');
+    for (var li = 0; li < chips.length; li++) labels.push(chips[li].textContent);
+    if (isIndexPage()) labels = []; // 指数/锚点页 concepts 区是角色 chip，非题材（spec「指数/锚点显式态」）
+    var limitEl = byId('rv-limit').querySelector('.limit-body');
+    var prompt = buildDeepSeekPrompt({
+      code: currentQualified(),
+      name: nameText === '' || nameText === '名称未获取' ? null : nameText, // 字面与 updateNameLine 占位一致
+      tradeDate: currentDate,
+      labels: labels,
+      limitText: limitEl !== null ? limitEl.textContent : null,
+      note: byId('rv-input').value,
+    });
+    var win = window.open(buildDeepSeekUrl(dsOrigin, prompt), '_blank');
+    if (win !== null && win !== undefined) {
+      try { win.opener = null; } catch (e) { /* 跨源置空失败不影响跳转 */ }
+      setStatus('已打开 DeepSeek——请确认预填提示词后发送');
+      return;
+    }
+    copyText(prompt, function (ok) {
+      setStatus(ok ? '页内弹窗未开启：提示词已复制——若 DeepSeek 未自动打开，请手动访问 chat.deepseek.com 粘贴发送'
+        : '页内弹窗未开启且复制失败——请手动访问 chat.deepseek.com');
+    });
+  });
+  // ── 思考线条单选行（owner 2026-10-13）：交易日下方一排单选，为下方卡片打当前
+  // 思考线条标签——保存时末行追加 #标签；localStorage 保留上一次（不可用时仅本页
+  // 生效）；只读态保持可用（与输入框同一策略：草稿可先写）。────────────────────
+  var threadRow = byId('rv-thread-row');
+  var threadRestored = loadThreadTag(threadStorage());
+  if (threadRestored !== null) {
+    var threadRestoredInput = threadRow.querySelector('input[value="' + threadRestored + '"]');
+    if (threadRestoredInput !== null) threadRestoredInput.checked = true;
+    threadTag = threadRestored;
+  }
+  threadRow.addEventListener('change', function (ev) {
+    var target = ev.target;
+    if (target === null || target.name !== 'rv-thread') return;
+    threadTag = target.value;
+    saveThreadTag(threadStorage(), threadTag);
+    setStatus('已选线条：' + threadTag + '——保存时在卡片末行追加 #' + threadTag);
+  });
   byId('rv-confirm-owner').addEventListener('click', function () {
     // 一次显式确认：归属切到新标的；确认后保存即可提交（服务端仍按 clientRequestId 幂等）。
     pendingOwner = null;
@@ -1332,6 +1683,21 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     if (mode === 'error') setMode('idle');
   });
   window.addEventListener('hashchange', applyParams);
+  window.addEventListener('pagehide', function () { pageClosed = true; invalidateReads(); });
+  /**
+   * 恢复浏览器缓存中的页面读取。
+   * 业务逻辑: pagehide后重新显示时恢复三通道，保留已选日期及草稿归属。
+   * 关键判断: 初次或重复pageshow不追加读取，关闭时已推进代际并取消旧响应。
+   * 异常处理: 各通道沿用既有加载失败处理。参数: 无。返回: 无。
+   */
+  function resumePageReads() {
+    if (!pageClosed) return;
+    pageClosed = false;
+    resetReadDisplay();
+    loadLocal(false);
+    loadEnrich();
+  }
+  window.addEventListener('pageshow', resumePageReads);
 
   // writable=false（A 层未生效）：仅保存禁用；输入框保持可编辑（草稿保留，
   // owner 2026-10-05 反馈「输入框无法点击进入」——TDX 免登录读态下仍可先写）。
@@ -1350,6 +1716,7 @@ window.__REVIEW__ = ${REVIEW_STATE_PLACEHOLDER};
     currentCode = null;
     currentRaw = initial.raw;
   }
+  resetReadDisplay();
   loadLocal(false);
   loadEnrich();
 })();
