@@ -153,4 +153,5 @@ TQ-Local 边界见 [AGENTS.md](AGENTS.md)。
 - [docs/roadmap.md](docs/roadmap.md) —— 阶段路线、议题裁决状态
 - [docs/carryover.md](docs/carryover.md) —— 搬运策略与溯源台账
 - [docs/design/](docs/design/) —— 迭代契约、每日闭环、盘后枢纽节点、数据契约、复盘页图像
+- [Web Pro 架构与交互规划提示词](docs/prompts/chatgpt-web-pro-workflow-architecture-2026-10-14.md) —— 固定源码版本，联网调研最佳实践，输出可扩展架构、页面设计与可执行迭代计划
 - [docs/spikes/](docs/spikes/) —— TDX 嵌入实测结论与证据

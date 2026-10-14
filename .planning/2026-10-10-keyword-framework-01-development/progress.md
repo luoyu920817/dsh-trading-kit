@@ -172,3 +172,8 @@
 - 复用实际ConfigEditor/owner/hashCAS的执行编辑不依赖picker，仅四字段，保留原预算/秘密/未知字段；实际SDK成功和执行激活失败回滚验证通过，不操作真实配置或Agent。
 - 页面26项/后端15项定向、typecheck/build、111文件1063全量零跳过、静态diff及复审通过。keyword-visibility-20261013包已装web，5产物hash一致，精确3080重启PID38556。
 - 实际API仍返回原任务waiting、自动执行false、模型未配置、今日调用0；executionEditing可用、设置页200、输入页免Cookie200、匿名执行保存401。原profile与原任务JSON前后hash相同。详见docs/spikes/keyword-task-visibility-2026-10-13.md，真实浏览器视觉/实际模型执行未验。
+# 2026-10-14 GitHub提交与Web Pro交接
+- 用户授权的当前源码/测试/设计及核心开发Markdown共153文件提交为0ed30c56366ff8953fa4b7dd3adeb7a0d08c7cfe，中文Conventional Commit；推送origin/codex/review-switch-p0成功并建立跟踪，不强推。
+- 新门禁113文件1089测试全部通过、真实宿主探针零跳过，typecheck/build通过。只清理暂存diff报告的21处末尾空行，没有代码重构。
+- .gitignore补本地workers探针/日志/回退快照/活动指针与基线临时文件；暂存凭据样式审核未发现真实新增凭据，不上传本地安装包或真实vault/profile。GitHub HTTPS路径握手失败后单次命令复用现有SOCKS代理成功，不修改全局网络/Git配置、不关闭证书核验。
+- 联网只读research agent核验Temporal、LangGraph、n8n、Dify、Windmill六份官方文档。源码推送后生成docs/prompts/chatgpt-web-pro-workflow-architecture-2026-10-14.md，固定上述源码提交，要求源码取证、真实联网、架构备选、信息架构/状态线框、P0/P1/P2与编码agent执行计划，并区分历史文档、宿主待验证能力与已实现事实。
